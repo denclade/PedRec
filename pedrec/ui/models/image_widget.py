@@ -34,12 +34,10 @@ class ImageWidget(QLabel):
 
     def set_humans(self, humans: List[Human]):
         self.humans = humans
-
-        # Initialize selection
+        # initial selection: the first recognized human (only signalled when the selection changes)
         if self.selected_human_uid is None and len(humans) > 0:
-            # First recognition to have one initial selection
             self.selected_human_uid = self.humans[0].uid
-        self.human_selected.emit(self.selected_human_uid)
+            self.human_selected.emit(self.selected_human_uid)
 
     def set_object_bbs(self, object_bbs: np.ndarray):
         self.object_bbs = object_bbs.copy()
@@ -52,7 +50,12 @@ class ImageWidget(QLabel):
         with QtGui.QPainter(self) as painter:
             label_size = self.size()
             start_point = QtCore.QPoint(0, 0)
-            scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
+            key = (pixmap.cacheKey(), label_size.width(), label_size.height())
+            if getattr(self, "_scaled_key", None) != key:  # scale every frame only once
+                self._scaled_key = key
+                self._scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio,
+                                                    transformMode=Qt.SmoothTransformation)
+            scaled_pixmap = self._scaled_pixmap
             self.scale_factor = self.img_size.width / scaled_pixmap.size().width()
             painter.drawPixmap(start_point, scaled_pixmap)
 

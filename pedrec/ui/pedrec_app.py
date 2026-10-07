@@ -209,12 +209,13 @@ class PedRecApp(QMainWindow):
 
         # fps_label
         self.fps_label.setText(f"FPS: {fps:03}")
+        self.worker.frame_consumed()
 
     @Slot(int)
     def set_selected_human_uid(self, selected_human_uid: int):
         self.selected_human_uid = selected_human_uid
         self.update_selected_human()
-        self.img_view.repaint()
+        self.img_view.update()
 
     def __clear_selected_human(self):
         self.__clear_ehpi()
@@ -245,6 +246,7 @@ class PedRecApp(QMainWindow):
         self.human_score_label.setText(f"Score: {int(selected_human.score * 100):03}%")
         self.actions_label.setText(f"Actions: {', '.join([a.name for a in selected_human.actions])}")
         size = get_human_size_from_skeleton_3d(selected_human.skeleton_3d)
+        self.human_size_label.setText(f"Size: {int(size)}mm" if size > 0 else "Size: -mm")
 
     def __update_skeleton_3d(self, selected_human: Human):
         skeleton = selected_human.skeleton_3d.copy()
