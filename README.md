@@ -138,7 +138,9 @@ network can be run on their own.
 GUI player controls (below the video): play / pause (`Space`), previous / next frame while paused (`Left` /
 `Right`, while playing they skip 5 s), replay (`Home`), skip back / forward and a seek bar. Processed frames are cached,
 so stepping back, replaying and seeking into the processed part show the same tracked results instantly; after a jump
-into an unprocessed part the tracking starts anew.
+into an unprocessed part the tracking starts anew. Left of the video a magnifier shows the plain camera image of the
+selected person (no overlays) to see what the person is doing; the button in its corner pops it out into an own,
+resizable window (closing the window docks it again).
 
 Useful options (see `python pedrec/demo.py --help`):
 - components: `--no-detector`, `--no-pose`, `--no-tracking`, `--no-action`, `--action-list c01|c01_real`
