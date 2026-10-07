@@ -220,6 +220,9 @@ def run_gui(pipeline: PedRecPipeline, input_provider: InputProviderBase, app_cfg
     from pedrec.ui.pedrec_app import PedRecApp
     from pedrec.ui.pipeline_worker import PipelineWorker
 
+    from qtpy.QtCore import Qt
+    # pyqtgraph shares its shader programs between all 3D views, which requires shared OpenGL contexts
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     worker = PipelineWorker(app, input_provider, pipeline)
     PedRecApp(app, worker, app_cfg)
