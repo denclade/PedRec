@@ -26,7 +26,7 @@ class Ehpi3DVariant:
 
     @property
     def experiment_name(self) -> str:
-        return f"ehpi_3d_sim_c01_actionrec_{self.name}"
+        return f"ehpi_stgcn_sim_c01_actionrec_{self.name}"
 
     def get_pedrec_cfg(self) -> PedRecTemporalDatasetConfig:
         return PedRecTemporalDatasetConfig(
@@ -92,11 +92,12 @@ def _build_variants() -> Dict[str, Ehpi3DVariant]:
 
 VARIANTS: Dict[str, Ehpi3DVariant] = _build_variants()
 
-DEFAULT_VARIANT = "gt_pred_64frames"  # the published EHPI3D model
+DEFAULT_VARIANT = "gt_pred_64frames"  # recipe of the published EHPI3D model
 
 
 def get_variant(name: str) -> Ehpi3DVariant:
-    key = name[len("ehpi_3d_sim_c01_actionrec_"):] if name.startswith("ehpi_3d_sim_c01_actionrec_") else name
+    prefix = "ehpi_stgcn_sim_c01_actionrec_"
+    key = name[len(prefix):] if name.startswith(prefix) else name
     if key not in VARIANTS:
         raise KeyError(f"Unknown EHPI3D variant '{name}'. Available: {', '.join(VARIANTS.keys())}")
     return VARIANTS[key]

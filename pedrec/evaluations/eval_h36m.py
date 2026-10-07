@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.dataset_configs import get_h36m_val_dataset_cfg_default
 from pedrec.configs.pedrec_net_config import PedRecNet50Config

@@ -98,8 +98,7 @@ class TudDataset(Dataset):
                 img = img[:, ::-1, :]
                 center[0] = img.shape[1] - center[0] - 1
                 orientation = flip_lr_orientation(orientation)
-        trans, trans_inv = get_affine_transforms(center, scale, rotation, self.input_size, add_inv=True,
-                                                 udp=getattr(self.cfg, "udp", False))
+        trans, trans_inv = get_affine_transforms(center, scale, rotation, self.input_size, add_inv=True)
 
         model_input = cv2.warpAffine(
             img,

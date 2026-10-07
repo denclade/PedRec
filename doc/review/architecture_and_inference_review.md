@@ -5,19 +5,27 @@ Stand: Oktober 2026. Ursprünglich reines Review; den Umsetzungsstand zeigt der 
 `pedrec/utils/ehpi_helper.py` und die Trainingsprozedur in `pedrec/training`. Referenzpunkt sind die in 2024 bis 2026
 etablierten Standards für 2D/3D-Pose, Orientierung, skelettbasierte Aktionserkennung, Detektion und Tracking.
 
-## Umsetzungsstand
+## Umsetzungsstand (Branch `claude/pedrec-v2-architecture`)
+
+Dieser Branch enthält genau eine Konfiguration (keine Varianten oder Schalter für alte Komponenten). Die Punkte 1, 3
+und 5 stammen aus dem Hauptzweig, die übrigen brauchen ein neues Training.
 
 | Prio | Maßnahme | Status |
 | --- | --- | --- |
-| 1 | `inference_mode`, ein PedRecNet-Batch pro Frame, GPU-NMS, gebatchte Rücktransformation | umgesetzt (`pedrec/inference`), äquivalent zum Original getestet |
-| 2 | Orientierung als (cos, sin) / zirkuläre Klassifikation, `BCEWithLogitsLoss` | offen, braucht Retraining → separater Branch; Loss-Heads laufen bereits in fp32 |
-| 3 | Best-Checkpoint, EMA, AMP, NumPy-Seed, Gradient-Clipping, Resume, NaN-Schutz | umgesetzt (`train_stepper.py`, `train_pedrec.py`, `train_ehpi3d.py`) |
-| 4 | ONNX/TensorRT-Export, `torch.compile`, `channels_last`, GPU-Preprocessing | umgesetzt (`export_onnx.py`, `--backend onnx`, `--fast`, `--compile`) |
-| 5 | ByteTrack-artiger Tracker, One-Euro-Filter | umgesetzt, neuer Standard; Original-Tracker per `--tracker legacy` |
-| 6-10 | Detektor, Konfidenz-Head, Backbone, EHPI3D, 3D-Schätzung | separater Branch (Retraining nötig) |
+| 1 | `inference_mode`, ein PedRecNet-Batch pro Frame, gebatchte Crops und Rücktransformation | umgesetzt (`pedrec/inference`) |
+| 2 | Orientierung als Biternion (cos, sin) mit Kosinus-Loss, Konfidenz mit `BCEWithLogitsLoss` | umgesetzt (`pedrec_orientation_head_shared.py`, `loss_functions.py`) |
+| 3 | Best-Checkpoint, EMA, AMP, Gradient-Clipping, Resume, NaN-Schutz | umgesetzt; dazu Kendall-Gewichtung mit begrenzten log-Varianzen, Half-Body-, Farb- und Erasing-Augmentation, Datensatz-Balancing |
+| 4 | `torch.compile`, `channels_last`, fp16, GPU-Preprocessing | umgesetzt; ONNX entfernt, weil der RT-DETR-Export mit aktuellem torch / transformers nicht verlustfrei funktioniert |
+| 5 | ByteTrack, One-Euro-Filter | umgesetzt, einziger Tracker |
+| 6 | Detektor RT-DETRv2 (`PekingU/rtdetr_v2_r18vd`, NMS-frei) | umgesetzt, YoloV4 entfernt |
+| 7 | Konfidenz aus Heatmap-Statistik | umgesetzt (`pedrec_pose_conf_head_heatmap.py`) |
+| 8 | UDP-Datenverarbeitung | umgesetzt (einzige Konvention); Backbone bleibt ResNet-50, damit das Training von der veröffentlichten v1-Kette starten kann |
+| 9 | ST-GCN statt ResNet-50 auf dem EHPI-Bild | umgesetzt (`ehpi_stgcn.py`, ca. 2 Mio. Parameter, gleiche EHPI-Daten) |
+| 10 | Lifting über die Zeit / SMPL | bewusst nicht umgesetzt (zusätzliches Modell, widerspricht dem Ziel einer schlanken Pipeline) |
 
-Zusätzlich: Python 3.14 und aktuelle Pakete (torch 2.14 mit CUDA 13 und sm_120 für RTX 50xx, numpy 2.5, pandas 3.0,
-PyQt6), kompatibel mit den veröffentlichten Gewichten und Dataframes.
+Die Trainingsdaten (Dataframes, Bilder, Annotationen) werden unverändert verwendet. Die v2-Gewichte müssen trainiert
+werden (`mise run download:checkpoints`, dann `mise run train:pedrec`, `mise run tools:extract-net --stage
+p2d3d_c_o_h36m_sim_mebow` und `mise run train:ehpi3d`); die veröffentlichten v1-Gewichte passen nicht mehr zur Demo.
 
 ## 1. Zusammenfassung
 

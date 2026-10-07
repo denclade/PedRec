@@ -41,12 +41,8 @@ run = [
     "uv pip install -r requirements-dev.txt",
 ]
 
-[tasks."setup:onnx"]
-description = "Install the optional ONNX export / onnxruntime-gpu (CUDA, TensorRT) backend"
-run = "uv pip install -r requirements-onnx.txt"
-
 [tasks.test]
-description = "Run the unit tests (equivalence of the optimized inference, legacy data compatibility, tracking, ...)"
+description = "Run the unit tests (network, losses, augmentation, pipeline, tracking, legacy data compatibility, ...)"
 run = "python -m pytest -q tests"
 
 [tasks."gpu:info"]
@@ -62,19 +58,17 @@ run = [
 ]
 
 [tasks."download:models"]
-description = "Download the pretrained YoloV4, PedRecNet, EHPI3D and pose-resnet weights into $PEDREC_DATA_DIR/models"
+description = "Download the RT-DETRv2 detector into the Hugging Face cache and the pose-resnet weights (start of the training chain)"
 run = """
 set -euo pipefail
-base="https://dennisnotes.com/files/pedrec/models"
-dl() { mkdir -p "$(dirname "$2")"; if [ -f "$2" ]; then echo "exists: $2"; else echo "downloading $1"; curl -L --fail -o "$2" "$1"; fi; }
-dl "$base/yolo_v4/yolov4.pth" "$PEDREC_DATA_DIR/models/yolo_v4/yolov4.pth"
-dl "$base/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth" "$PEDREC_DATA_DIR/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth"
-dl "$base/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth" "$PEDREC_DATA_DIR/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth"
-dl "$base/human_pose_baseline/pose_resnet_50_256x192.pth.tar" "$PEDREC_DATA_DIR/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar"
+python -c "from pedrec.configs.default_paths import RTDETR_MODEL; from transformers import AutoModelForObjectDetection as M; M.from_pretrained(RTDETR_MODEL)"
+f="$PEDREC_DATA_DIR/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar"
+mkdir -p "$(dirname "$f")"
+if [ -f "$f" ]; then echo "exists: $f"; else curl -L --fail -o "$f" "https://dennisnotes.com/files/pedrec/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar"; fi
 """
 
 [tasks."download:checkpoints"]
-description = "Download the intermediate training checkpoint(s) of a stage: mise run download:checkpoints <stage>"
+description = "Download a published (v1) training checkpoint to initialize the v2 training from: mise run download:checkpoints [stage]"
 run = """
 set -euo pipefail
 stage="{{arg(name="stage", default="p2d3d_c_o_h36m_sim")}}"
@@ -120,7 +114,7 @@ description = "Full pipeline without GUI; add --output out.mp4 / --json out.json
 run = "python pedrec/demo.py --headless"
 
 [tasks."demo:detector"]
-description = "Detector (YoloV4) only, headless: mise run demo:detector --video in.mp4 --output out.mp4"
+description = "Detector (RT-DETR) only, headless: mise run demo:detector --video in.mp4 --output out.mp4"
 run = "python pedrec/demo.py --headless --no-pose"
 
 [tasks."demo:pose"]
@@ -139,17 +133,9 @@ run = "python pedrec/demo.py --no-action"
 description = "Qt demo with fp16 autocast + channels_last (CUDA Tensor Cores); pass --video/--webcam/..."
 run = "python pedrec/demo.py --fast"
 
-[tasks."demo:onnx"]
-description = "Qt demo with the exported ONNX models on onnxruntime (TensorRT / CUDA); run export:onnx first"
-run = "python pedrec/demo.py --backend onnx"
-
 [tasks.bench]
-description = "Benchmark the pipeline per stage and compare with the original implementation; e.g. --fast, --video x.mp4"
+description = "Benchmark the networks and the pipeline per stage; e.g. --fast, --video x.mp4, --random-weights"
 run = "python pedrec/tools/benchmark_pipeline.py"
-
-[tasks."export:onnx"]
-description = "Export YoloV4, PedRecNet and EHPI3D to $PEDREC_DATA_DIR/models/onnx and verify them against PyTorch"
-run = "python pedrec/tools/networks/export_onnx.py"
 
 # ------------------------------------------------------------------------------------------------------- training
 [tasks."train:list"]
@@ -157,16 +143,16 @@ description = "List the PedRecNet training stages and their dependencies"
 run = "python pedrec/training/train_pedrec.py --list"
 
 [tasks."train:pedrec"]
-description = "Train one PedRecNet stage (default: the published p2d3d_c_o_h36m_sim_mebow); e.g. --stage p2d_coco_only"
+description = "Train one PedRecNet stage (default: p2d3d_c_o_h36m_sim_mebow, initialized from the downloaded v1 checkpoint); e.g. --stage p2d_coco_only"
 run = "python pedrec/training/train_pedrec.py"
 
 [tasks."train:pedrec:chain"]
-description = "Train all stages up to the given one in order, skipping stages with an existing checkpoint: mise run train:pedrec:chain [stage]"
+description = "Train all stages up to the given one from scratch, skipping stages with an existing v2 checkpoint: mise run train:pedrec:chain [stage]"
 run = """
 set -euo pipefail
 target="{{arg(name="stage", default="p2d3d_c_o_h36m_sim_mebow")}}"
 for stage in $(python pedrec/training/train_pedrec.py --chain --stage "$target" | sed 's/ -> / /g'); do
-  ckpt="$PEDREC_DATA_DIR/models/pedrec/single_results/experiment_pedrec_${stage}_0.pth"
+  ckpt="$PEDREC_DATA_DIR/models/pedrec/single_results/experiment_pedrec_v2_${stage}_0.pth"
   if [ -f "$ckpt" ]; then echo "### skipping $stage (checkpoint exists: $ckpt)"; continue; fi
   echo "### training stage $stage"
   python pedrec/training/train_pedrec.py --stage "$stage"
@@ -186,19 +172,19 @@ description = "Train the joint confidence stage (COCO + Human3.6m + SIM)"
 run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_h36m_sim"
 
 [tasks."train:pedrec:orientation"]
-description = "Train the full network incl. orientation (COCO MEBOW + Human3.6m + SIM) = published model"
+description = "Train the full network incl. orientation (COCO MEBOW + Human3.6m + SIM) = demo model"
 run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_o_h36m_sim_mebow"
 
 [tasks."train:ehpi3d:list"]
-description = "List the EHPI3D action recognition training variants"
+description = "List the action recognition (ST-GCN on EHPI sequences) training variants"
 run = "python pedrec/training/train_ehpi3d.py --list"
 
 [tasks."train:ehpi3d"]
-description = "Train an EHPI3D action recognition variant (default: gt_pred_64frames = published model); e.g. --variant gt"
+description = "Train an ST-GCN action recognition variant (default: gt_pred_64frames = demo model); e.g. --variant gt"
 run = "python pedrec/training/train_ehpi3d.py"
 
 [tasks."train:ehpi3d:data"]
-description = "Create the EHPI3D training input: PedRecNet results on SIM-C01 train + val, expanded to all frames"
+description = "Create the action recognition training input: PedRecNet results on SIM-C01 train + val, expanded to all frames"
 run = [
     "python pedrec/tools/resultwriters/sim_c01_to_results.py --split train",
     "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split train",
@@ -224,7 +210,7 @@ description = "Body orientation accuracy on TUD multiview pedestrians; --weights
 run = "python pedrec/evaluations/eval_tud_orientation.py"
 
 [tasks."eval:ehpi3d"]
-description = "Action recognition metrics of EHPI3D variants on SIM-C01; --variants gt_pred_64frames ..."
+description = "Action recognition metrics of the ST-GCN variants on SIM-C01; --variants gt_pred_64frames ..."
 run = "python pedrec/evaluations/eval_ehpi3d.py"
 
 [tasks."results:coco"]
@@ -236,7 +222,7 @@ description = "Write PedRecNet result dataframes for Human3.6m val (input of exp
 run = "python pedrec/tools/resultwriters/h36m_to_results.py"
 
 [tasks."results:sim-c01"]
-description = "Write PedRecNet result dataframes for SIM-C01 (input of export:sim-c01 and the EHPI3D training); --split train|val"
+description = "Write PedRecNet result dataframes for SIM-C01 (input of export:sim-c01 and the action recognition training); --split train|val"
 run = "python pedrec/tools/resultwriters/sim_c01_to_results.py"
 
 [tasks."export:coco"]
@@ -261,5 +247,5 @@ description = "Rewrite dataset / result dataframes (*.pkl from pandas 1.3) with 
 run = "python pedrec/tools/datasets/convert_legacy_dfs.py"
 
 [tasks."tools:ehpi-videos"]
-description = "Run PedRecNet on the EHPI video dataset and write the skeleton dataframe used by the *_ehpi2dvids variants"
+description = "Run the pipeline (RT-DETR + PedRecNet + ByteTrack) on the EHPI video dataset and write the skeleton dataframe (default <src>/pedrec_v2_results.pkl)"
 run = "python pedrec/ehpi_dataset_vids_to_dataframe.py"

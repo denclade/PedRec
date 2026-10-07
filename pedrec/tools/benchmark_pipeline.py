@@ -1,12 +1,13 @@
 """
-Benchmarks the inference pipeline per stage and compares the optimized detector / pose path with the original
-implementation (cv2 crops per person, numpy post-processing, CPU NMS).
+Benchmarks the inference pipeline: the isolated networks (RT-DETR, PedRecNet on N person crops, ST-GCN on N
+sequences) and the full pipeline per stage.
 
     python pedrec/tools/benchmark_pipeline.py                         # synthetic 1920x1080 frames, 6 persons
     python pedrec/tools/benchmark_pipeline.py --video my.mp4 --fast   # real video, fp16 + channels_last
-    python pedrec/tools/benchmark_pipeline.py --random-weights --cpu  # no weight files needed
+    python pedrec/tools/benchmark_pipeline.py --random-weights --cpu  # no weight files / downloads needed
 
-Without ``--random-weights`` the default weights below the data root are used.
+Without ``--random-weights`` the default PedRecNet / ST-GCN weights below the data root and the configured RT-DETR
+model are used. With ``--random-weights`` the RT-DETR model uses the default transformers RT-DETRv2 configuration.
 """
 import sys
 
@@ -14,9 +15,7 @@ sys.path.append('.')  # allow running as a script from the repository root
 
 import argparse
 import logging
-import os
 import statistics
-import tempfile
 import time
 from collections import defaultdict
 
@@ -26,16 +25,13 @@ import torch
 
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
-from pedrec.configs.yolo_v4_config import YoloV4Config
 from pedrec.inference import gpu_ops
 from pedrec.inference.pipeline import PedRecPipeline, PipelineConfig, RuntimeConfig
 from pedrec.models.data_structures import ImageSize
-from pedrec.networks.net_pedrec.ehpi_3d_net import Ehpi3DNet
+from pedrec.networks.net_detr.rtdetr_detector import RTDetrDetector
+from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
-from pedrec.networks.net_yolo_v4.yolo_v4_helper import do_detect
-from pedrec.networks.net_yolo_v4.yolov4 import YoloV4
 from pedrec.utils.log_helper import configure_logger
-from pedrec.utils.pose_deconv_helper import pedrec_recognizer
 from pedrec.utils.torch_utils.torch_helper import get_device
 
 logger = logging.getLogger(__name__)
@@ -62,8 +58,8 @@ def video_frames(path: str, size: ImageSize, num_frames: int):
     cap.release()
 
 
-def synthetic_bbs(size: ImageSize, num_persons: int):
-    return [np.array([(p + 0.5) * size.width / num_persons, size.height * 0.6, 100, size.height * 0.6, 0.9, 0],
+def synthetic_bbs(size: ImageSize, num_persons: int, shift: float = 0.0):
+    return [np.array([(p + 0.5) * size.width / num_persons + shift, size.height * 0.6, 100, size.height * 0.6, 0.9, 0],
                      dtype=np.float32) for p in range(num_persons)]
 
 
@@ -85,16 +81,14 @@ def timeit(fn, device, repeats: int, warmup: int = 3):
     return statistics.median(times)
 
 
-def write_random_weights(directory: str, num_actions: int):
+def random_models(device: torch.device, num_actions: int, half: bool):
+    import transformers
     torch.manual_seed(0)
-    paths = {"yolo": os.path.join(directory, "yolo.pth"), "pedrec": os.path.join(directory, "pedrec.pth"),
-             "ehpi": os.path.join(directory, "ehpi.pth")}
-    torch.save(YoloV4(YoloV4Config(), inference=True).state_dict(), paths["yolo"])
-    net = PedRecNet(PedRecNet50Config())
-    net.init_weights()
-    torch.save(net.state_dict(), paths["pedrec"])
-    torch.save(Ehpi3DNet(num_actions).state_dict(), paths["ehpi"])
-    return paths
+    pose_net = PedRecNet(PedRecNet50Config())
+    pose_net.init_weights()
+    detr = transformers.RTDetrV2ForObjectDetection(transformers.RTDetrV2Config(num_labels=80))
+    detector = RTDetrDetector(device, "random", half=half, model=detr)
+    return detector, pose_net, EhpiStGcn(num_actions)
 
 
 def parse_args(argv=None):
@@ -103,7 +97,7 @@ def parse_args(argv=None):
     parser.add_argument("--size", default="1920x1080")
     parser.add_argument("--persons", type=int, default=6, help="Persons in the synthetic frames / pose batch size.")
     parser.add_argument("--frames", type=int, default=30)
-    parser.add_argument("--repeats", type=int, default=10, help="Repeats of the isolated stage comparison.")
+    parser.add_argument("--repeats", type=int, default=10, help="Repeats of the isolated network timings.")
     parser.add_argument("--random-weights", action="store_true", help="Use randomly initialized networks.")
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--cpu", action="store_true")
@@ -111,9 +105,6 @@ def parse_args(argv=None):
     parser.add_argument("--channels-last", action="store_true")
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--fast", action="store_true", help="--half --channels-last")
-    parser.add_argument("--backend", choices=["torch", "onnx"], default="torch")
-    parser.add_argument("--tracker", choices=["bytetrack", "legacy"], default="bytetrack")
-    parser.add_argument("--skip-legacy", action="store_true", help="Skip the comparison with the original code.")
     args = parser.parse_args(argv)
     if args.fast:
         args.half = args.channels_last = True
@@ -129,60 +120,40 @@ def main(argv=None):
     device = get_device(not args.cpu)
     app_cfg = AppConfig()
     app_cfg.inference.img_size = args.img_size
-    weights = {"yolo": None, "pedrec": None, "ehpi": None}
-    tmp = None
-    if args.random_weights:
-        tmp = tempfile.TemporaryDirectory()
-        weights = write_random_weights(tmp.name, len(app_cfg.inference.action_list))
+    num_actions = len(app_cfg.inference.action_list)
 
-    runtime = RuntimeConfig(half=args.half, channels_last=args.channels_last, compile=args.compile,
-                            backend=args.backend)
-    cfg = PipelineConfig(yolo_weights=weights["yolo"], pedrec_weights=weights["pedrec"],
-                         ehpi3d_weights=weights["ehpi"], data_root=args.data_dir, tracker=args.tracker,
-                         human_min_score=0.0, runtime=runtime)
-    pipeline = PedRecPipeline(cfg, app_cfg, device)
+    runtime = RuntimeConfig(half=args.half, channels_last=args.channels_last, compile=args.compile)
+    cfg = PipelineConfig(data_root=args.data_dir, human_min_score=0.0, runtime=runtime)
+    models = random_models(device, num_actions, args.half) if args.random_weights else (None, None, None)
+    pipeline = PedRecPipeline(cfg, app_cfg, device, *models)
 
     device_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
     print(f"\nDevice: {device_name} | torch {torch.__version__} | size {args.size} | half={args.half} "
-          f"channels_last={args.channels_last} compile={args.compile} backend={args.backend}")
+          f"channels_last={args.channels_last} compile={args.compile}")
 
-    # ------------------------------------------------------------------ isolated stages: original vs optimized
-    if not args.skip_legacy and args.backend == "torch":
-        img = next(synthetic_frames(args.img_size, args.persons, 1))
-        bbs = synthetic_bbs(args.img_size, args.persons)
-        pose_net = pipeline.pose_estimator.run.module
-        detector = pipeline.detector.run.module
-        yolo_size = YoloV4Config().model.input_size
+    # ------------------------------------------------------------------ isolated networks
+    img = next(synthetic_frames(args.img_size, args.persons, 1))
+    bbs = synthetic_bbs(args.img_size, args.persons)
+    ehpis = [np.random.default_rng(i).integers(0, 255, (cfg.temporal_field.height, cfg.temporal_field.width, 3),
+                                               dtype=np.uint8) for i in range(args.persons)]
 
-        def legacy_pose():
-            with torch.no_grad():
-                pedrec_recognizer(pose_net, PedRecNet50Config(), img, bbs, device)
+    def run_detector():
+        with torch.inference_mode():
+            pipeline.detector(gpu_ops.frame_to_tensor(img, device), args.img_size, cfg.person_low_thresh)
 
-        def optimized_pose():
-            with torch.inference_mode():
-                pipeline.pose_estimator(gpu_ops.frame_to_tensor(img, device), bbs)
+    def run_pose():
+        with torch.inference_mode():
+            pipeline.pose_estimator(gpu_ops.frame_to_tensor(img, device), bbs)
 
-        def legacy_detect():
-            sized = cv2.resize(img, (yolo_size.width, yolo_size.height))
-            with torch.no_grad():
-                do_detect(detector, sized, args.img_size, 0.4, 0.6, device, logger)
+    def run_action():
+        with torch.inference_mode():
+            pipeline.action_recognizer(ehpis)
 
-        def optimized_detect():
-            with torch.inference_mode():
-                pipeline.detector(gpu_ops.frame_to_tensor(img, device), args.img_size, 0.4, 0.6)
-
-        rows = []
-        for name, legacy, optimized in [("detector (YoloV4)", legacy_detect, optimized_detect),
-                                        (f"pose (PedRecNet, {args.persons} persons)", legacy_pose, optimized_pose)]:
-            t_legacy = timeit(legacy, device, args.repeats)
-            t_new = timeit(optimized, device, args.repeats)
-            rows.append((name, t_legacy, t_new))
-        print("\nStage comparison (median, ms)")
-        print(f"{'stage':38} {'original':>10} {'optimized':>10} {'speedup':>8}")
-        for name, t_legacy, t_new in rows:
-            print(f"{name:38} {t_legacy * 1000:10.1f} {t_new * 1000:10.1f} {t_legacy / t_new:7.2f}x")
-        print("(the original legacy tracker additionally ran PedRecNet a second time for tracked but undetected "
-              "persons; the optimized pipeline reuses the first batch)")
+    print("\nNetworks (median, ms)")
+    for name, fn in [("detector (RT-DETR)", run_detector),
+                     (f"pose (PedRecNet, {args.persons} persons)", run_pose),
+                     (f"action (ST-GCN, {args.persons} persons)", run_action)]:
+        print(f"{name:38} {timeit(fn, device, args.repeats) * 1000:8.1f}")
 
     # ------------------------------------------------------------------ full pipeline
     frames = video_frames(args.video, args.img_size, args.frames) if args.video \
@@ -192,17 +163,15 @@ def main(argv=None):
         detect = pipeline.detect
         frame_counter = iter(range(10 ** 9))
 
-        def detect_with_synthetic_persons(frame, tracked_humans):
-            detect(frame, tracked_humans)
-            shift = 3 * next(frame_counter)
-            return [bb + np.array([shift, 0, 0, 0, 0, 0], dtype=np.float32)
-                    for bb in synthetic_bbs(args.img_size, args.persons)], []
+        def detect_with_synthetic_persons(frame):
+            detect(frame)
+            return synthetic_bbs(args.img_size, args.persons, 3 * next(frame_counter)), []
         pipeline.detect = detect_with_synthetic_persons
     timings = defaultdict(list)
     count = 0
-    for nr, img in enumerate(frames, start=1):
+    for nr, frame in enumerate(frames, start=1):
         sync(device)
-        result = pipeline.process(nr, img)
+        result = pipeline.process(nr, frame)
         sync(device)
         if nr <= 3:  # warm up (cudnn benchmark, compile)
             continue
@@ -216,8 +185,6 @@ def main(argv=None):
     for stage, values in timings.items():
         print(f"{stage:20} {statistics.median(values) * 1000:8.1f}")
     print(f"{'=> fps':20} {1.0 / statistics.median(timings['total']):8.1f}")
-    if tmp is not None:
-        tmp.cleanup()
 
 
 if __name__ == "__main__":

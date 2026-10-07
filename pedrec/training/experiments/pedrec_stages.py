@@ -57,10 +57,6 @@ class PedRecTrainingStage:
     batch_size: int = 48
 
     @property
-    def experiment_name(self) -> str:
-        return f"experiment_pedrec_{self.name}"
-
-    @property
     def train_sigmas(self) -> bool:
         """The MTL loss weights (sigmas) are only trained when more than the 2D pose loss is active."""
         return self.use_p3d_loss or self.use_conf_loss or self.use_orientation_loss

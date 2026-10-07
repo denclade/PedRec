@@ -6,7 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
-from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
@@ -117,9 +117,7 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
     ####################################################################################################################
     ############################################ Initialize Network ####################################################
     ####################################################################################################################
-    net = load_pedrec_net(weights_path, device)  # MTL checkpoint or *_net.pth, architecture from the sidecar
-    udp = net.cfg.arch.udp
-    dataset_cfg.udp = udp
+    net = load_pedrec_net(weights_path, device)  # MTL checkpoint or *_net.pth
 
     ####################################################################################################################
     ################################################# Datasets #########################################################
@@ -160,13 +158,13 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
             pose2d_preds = preds["skeleton"]
             pose3d_preds = preds["skeleton_3d"]
             orientation_preds = preds["orientation"]
-            pose2d_preds = get_total_coords(pose2d_preds, net_cfg.model.input_size, centers, scales, rotations, udp)
+            pose2d_preds = get_total_coords(pose2d_preds, net_cfg.model.input_size, centers, scales, rotations)
             pose3d_preds[:, :, :3] = (pose3d_preds[:, :, :3] * 3000) - 1500  # to cm
 
             pose2d_gts = labels["skeleton"].cpu().detach().numpy()
             pose3d_gts = labels["skeleton_3d"].cpu().detach().numpy()
             orientation_gts = labels["orientation"].cpu().detach().numpy()
-            pose2d_gts = get_total_coords(pose2d_gts, net_cfg.model.input_size, centers, scales, rotations, udp)
+            pose2d_gts = get_total_coords(pose2d_gts, net_cfg.model.input_size, centers, scales, rotations)
             pose3d_gts[:, :, :3] = (pose3d_gts[:, :, :3] * 3000) - 1500  # to cm
 
 

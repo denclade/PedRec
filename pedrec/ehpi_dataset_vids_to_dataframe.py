@@ -1,36 +1,29 @@
+"""
+Runs PedRecNet (via the inference pipeline: RT-DETR -> PedRecNet -> ByteTrack -> One Euro) on the EHPI video dataset
+and writes the skeleton dataframe used by the ``*_ehpi2dvids`` action recognition variants. Per frame the most
+consistently tracked person is stored (same column layout as the published dataframe).
+
+    python pedrec/ehpi_dataset_vids_to_dataframe.py [--src-dir data/videos/ehpi_videos] [--weights ...] [--output ...]
+"""
 import sys
 
 sys.path.append('.')  # allow running as a script from the repository root
 
-import logging
+import argparse
 import os
-import time
-from typing import List
+from typing import List, Optional
 
-import cv2
 import numpy as np
 import pandas as pd
 
 from pedrec.configs.app_config import AppConfig
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
-from pedrec.configs.yolo_v4_config import YoloV4Config
+from pedrec.inference.pipeline import PedRecPipeline, PipelineConfig
 from pedrec.models.constants.action_mappings import ACTION
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 from pedrec.models.data_structures import ImageSize
 from pedrec.models.human import Human
-from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
-from pedrec.networks.net_yolo_v4.yolo_v4_helper import do_detect
-from pedrec.tracking.human_merger import HumanMerger
-from pedrec.tracking.human_tracker import HumanTracker, add_undetected_bbs_from_tracking, bb_tracking, remove_duplicates
-from pedrec.utils.bb_helper import split_human_bbs, get_bbs_above_score
-from pedrec.utils.demo_helper import get_detector, init_pose_model
-from pedrec.utils.human_helper import get_humans_from_pedrec_detections
-from pedrec.utils.image_content_buffer import ImageContent, ImageContentBuffer
 from pedrec.utils.input_providers.img_dir_provider import ImgDirProvider
-from pedrec.utils.input_providers.input_provider_base import InputProviderBase
 from pedrec.utils.log_helper import configure_logger
-from pedrec.utils.pose_deconv_helper import (pedrec_recognizer, do_redetect_pose_recognition)
-from pedrec.utils.time_helper import timed
 from pedrec.utils.torch_utils.torch_helper import get_device
 
 
@@ -41,29 +34,17 @@ def set_df_dtypes(df: pd.DataFrame):
     df["action"] = df["action"].astype("category")
 
     for joint in SKELETON_PEDREC_JOINTS:
-        df[f"skeleton2d_{joint.name}_x"] = df[f"skeleton2d_{joint.name}_x"].astype("float32")
-        df[f"skeleton2d_{joint.name}_y"] = df[f"skeleton2d_{joint.name}_y"].astype("float32")
-        df[f"skeleton2d_{joint.name}_score"] = df[f"skeleton2d_{joint.name}_score"].astype("float32")
-        df[f"skeleton2d_{joint.name}_visible"] = df[f"skeleton2d_{joint.name}_visible"].astype("category")
-        df[f"skeleton2d_{joint.name}_supported"] = df[f"skeleton2d_{joint.name}_visible"].astype("category")
+        for dim in ("2d", "3d"):
+            coords = ("x", "y") if dim == "2d" else ("x", "y", "z")
+            for coord in coords + ("score",):
+                df[f"skeleton{dim}_{joint.name}_{coord}"] = df[f"skeleton{dim}_{joint.name}_{coord}"].astype("float32")
+            for flag in ("visible", "supported"):
+                df[f"skeleton{dim}_{joint.name}_{flag}"] = df[f"skeleton{dim}_{joint.name}_{flag}"].astype("category")
 
-        df[f"skeleton3d_{joint.name}_x"] = df[f"skeleton3d_{joint.name}_x"].astype("float32")
-        df[f"skeleton3d_{joint.name}_y"] = df[f"skeleton3d_{joint.name}_y"].astype("float32")
-        df[f"skeleton3d_{joint.name}_z"] = df[f"skeleton3d_{joint.name}_z"].astype("float32")
-        df[f"skeleton3d_{joint.name}_score"] = df[f"skeleton3d_{joint.name}_score"].astype("float32")
-        df[f"skeleton3d_{joint.name}_visible"] = df[f"skeleton3d_{joint.name}_visible"].astype("category")
-        df[f"skeleton3d_{joint.name}_supported"] = df[f"skeleton3d_{joint.name}_visible"].astype("category")
-
-        df["body_orientation_phi"] = df["body_orientation_phi"].astype("float32")
-        df["body_orientation_theta"] = df["body_orientation_theta"].astype("float32")
-        df["body_orientation_score"] = df["body_orientation_score"].astype("float32")
-        df["body_orientation_visible"] = df["body_orientation_visible"].astype("category")
-
-        df["head_orientation_phi"] = df["head_orientation_phi"].astype("float32")
-        df["head_orientation_theta"] = df["head_orientation_theta"].astype("float32")
-        df["head_orientation_score"] = df["head_orientation_score"].astype("float32")
-        df["head_orientation_visible"] = df["head_orientation_visible"].astype("category")
-
+    for part in ("body", "head"):
+        for value in ("phi", "theta", "score"):
+            df[f"{part}_orientation_{value}"] = df[f"{part}_orientation_{value}"].astype("float32")
+        df[f"{part}_orientation_visible"] = df[f"{part}_orientation_visible"].astype("category")
 
 def get_column_names():
     column_names = [
@@ -99,134 +80,41 @@ def get_column_names():
     return column_names
 
 
-class PedRecNetDemoWorker(object):
-    def __init__(self, input_provider: InputProviderBase, app_cfg: AppConfig,
-                 model_file_path: str):
-        super().__init__()
-        configure_logger()
-        self.logger = logging.getLogger(__name__)
-        self.app_cfg = app_cfg
-        self.device = get_device(self.app_cfg.cuda.use_gpu)
+def get_dummy_human() -> Human:
+    return Human(bb=[0, 0, 0, 0, 0, 0],
+                 skeleton_2d=np.zeros((len(SKELETON_PEDREC_JOINTS), 3), dtype=np.float32),
+                 skeleton_3d=np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32),
+                 orientation=np.zeros((2, 2), dtype=np.float32))
 
-        yolo_weights = "data/models/yolo_v4/yolov4.pth"
-        pedrecnet_weights = model_file_path
 
-        # Detector
-        self.yolo_cfg = YoloV4Config()
-        self.detector = get_detector(self.yolo_cfg, yolo_weights, self.logger, self.device)
+def select_human(humans: List[Human], last_uid: Optional[int]) -> Optional[Human]:
+    """The person followed in the previous frame if still tracked, otherwise the one with the highest score."""
+    for human in humans:
+        if human.uid == last_uid:
+            return human
+    return max(humans, key=lambda h: h.score, default=None)
 
-        # Pose
-        self.pose_cfg = PedRecNet50Config()
-        self.pose_recognizer = init_pose_model(PedRecNet(self.pose_cfg), pedrecnet_weights, self.logger, self.device)
-        # self.action_list = [ACTION.IDLE,
-        #                     ACTION.WALK,
-        #                     ACTION.WAVE,
-        #                     ACTION.KICK_BALL,
-        #                     ACTION.THROW,
-        #                     ACTION.LOOK_FOR_TRAFFIC,
-        #                     ACTION.HITCHHIKE,
-        #                     ACTION.TURN_AROUND,
-        #                     ACTION.WORK,
-        #                     ACTION.ARGUE,
-        #                     ACTION.STUMBLE,
-        #                     ACTION.OPEN_DOOR,
-        #                     ACTION.FALL,
-        #                     ACTION.STAND_UP,
-        #                     ACTION.FIGHT]
-        # self.movement_recognizer = Ehpi3DNet(15).to(self.device)
-        # self.movement_recognizer.load_state_dict(torch.load("data/models/ehpi3d/ehpi3d_c01_test_01.pth"))
-        # self.movement_recognizer.eval()
-        # Tracking
-        self.human_tracker = HumanTracker(img_size=self.app_cfg.inference.img_size)
-        self.human_merger = HumanMerger(self.app_cfg.inference.img_size)
-        self.image_content_buffer: ImageContentBuffer = ImageContentBuffer(
-            buffer_size=self.app_cfg.inference.buffer_size)
 
-        self.input_provider = input_provider
-        self.dummy_human = Human(bb=[0, 0, 0, 0, 0, 0],
-                                 skeleton_2d=np.zeros((len(SKELETON_PEDREC_JOINTS), 3), dtype=np.float32),
-                                 skeleton_3d=np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32),
-                                 orientation=np.array([[0, 0], [0, 0]], dtype=np.float32)
-                                 )
-
-    def run_impl(self, vid_path: str, action_label: ACTION):
-        result_rows = []
-        for frame_nr, img in enumerate(self.input_provider.get_data()):
-            start = time.time()
-            last_humans = self.image_content_buffer.get_last_humans()
-            tracked_humans = self.human_tracker.get_humans_by_tracking(img, previous_humans=last_humans)
-
-            human_bbs, other_bbs = self.get_bbs(img, tracked_humans)
-
-            pose_time, pose_preds = timed(
-                lambda: pedrec_recognizer(self.pose_recognizer, self.pose_cfg, img, human_bbs, self.device))
-            humans = get_humans_from_pedrec_detections(human_bbs, pose_preds)
-            humans = self.get_humans_with_tracking(img, humans, tracked_humans)
-            humans = [human for human in humans if human.score > 0.65]  # remove low score humans and unnatural high
-
-            best_human = None
-            for human in humans:
-                history = self.image_content_buffer.get_human_data_buffer_by_id(human.uid)
-                self.smooth_data(human, history)
-                if len(history) > 0:
-                    best_human = human
-                    break
-                if best_human is None or best_human.score < human.score:
-                    best_human = human
-                # human.ehpi = get_ehpi_from_human_history(human, history)
-                # ehpis.append(ehpi_transform(human.ehpi))
-
-            orientation_vis_supp = [1, 1]
-            if best_human is None:
-                best_human = self.dummy_human
-                orientation_vis_supp = [0, 0]
-
-            pose2d_pred = best_human.skeleton_2d
-            pose3d_pred = best_human.skeleton_3d
-            orientation_pred = best_human.orientation
-            visibles = (best_human.skeleton_2d[:, 2] > 0.5).astype(np.int32)
-            supported = np.ones(best_human.skeleton_2d.shape[0])
-            visible_supported = np.array([visibles, supported]).transpose(1, 0)
-            pose2d_pred = np.concatenate((pose2d_pred, visible_supported), axis=1)
-            pose3d_pred = np.concatenate((pose3d_pred, visible_supported), axis=1)
-            pose2d_pred = pose2d_pred.reshape(-1).tolist()
-            pose3d_pred = pose3d_pred.reshape(-1).tolist()
-            orientation_pred_body = orientation_pred[0].reshape(-1).tolist()
-            orientation_pred_head = orientation_pred[1].reshape(-1).tolist()
-            result_rows.append(
-                [vid_path, frame_nr, best_human.uid,
-                 action_label.value] + pose2d_pred + pose3d_pred + orientation_pred_body + orientation_vis_supp + orientation_pred_head + orientation_vis_supp)
-
-            image_content = ImageContent(humans=humans, objects=other_bbs)
-            self.image_content_buffer.add(image_content)
-        return result_rows
-
-    def get_bbs(self, img: np.ndarray, tracked_humans: List[Human]):
-        sized = cv2.resize(img, (self.yolo_cfg.model.input_size.width, self.yolo_cfg.model.input_size.height))
-        detection_time, bbs = timed(
-            lambda: do_detect(self.detector, sized, self.app_cfg.inference.img_size, 0.4, 0.6, self.device, self.logger,
-                              tracked_humans))
-        human_bbs, other_bbs = split_human_bbs(bbs[0])
-        human_bbs = bb_tracking(human_bbs, tracked_humans)
-        human_bbs = add_undetected_bbs_from_tracking(human_bbs, tracked_humans)
-        human_bbs = get_bbs_above_score(human_bbs, 0.6)
-        human_bbs = remove_duplicates(human_bbs)
-        return human_bbs, other_bbs
-
-    def get_humans_with_tracking(self, img: np.ndarray, humans: List[Human], tracked_humans: List[Human]):
-        humans, undetected_humans = self.human_merger.merge_humans(humans, tracked_humans, assign_new_ids=True)
-        redetected_humans = do_redetect_pose_recognition(self.pose_recognizer, self.pose_cfg, img, undetected_humans,
-                                                         self.device)
-        humans.extend(redetected_humans)
-        return humans
-
-    def smooth_data(self, human: Human, history: List[Human], num_smoothing: int = 2):
-        if len(history) >= num_smoothing:
-            for i in range(1, num_smoothing):
-                human.skeleton_3d += history[-i].skeleton_3d
-                human.orientation += history[-i].orientation
-            human.orientation /= num_smoothing
-            human.skeleton_3d /= num_smoothing
+def video_to_rows(pipeline: PedRecPipeline, img_dir: str, rel_path: str, action_label: ACTION) -> list:
+    rows = []
+    last_uid = None
+    for frame_nr, img in enumerate(ImgDirProvider(img_dir, image_size=pipeline.img_size).get_data()):
+        result = pipeline.process(frame_nr, img)
+        human = select_human(result.humans, last_uid)
+        orientation_vis_supp = [1, 1]
+        if human is None:
+            human = get_dummy_human()
+            orientation_vis_supp = [0, 0]
+        else:
+            last_uid = human.uid
+        visibles = (human.skeleton_2d[:, 2] > 0.5).astype(np.int32)
+        visible_supported = np.stack([visibles, np.ones_like(visibles)], axis=1)
+        pose2d = np.concatenate((human.skeleton_2d, visible_supported), axis=1).reshape(-1).tolist()
+        pose3d = np.concatenate((human.skeleton_3d, visible_supported), axis=1).reshape(-1).tolist()
+        rows.append([rel_path, frame_nr, human.uid, action_label.value] + pose2d + pose3d
+                    + human.orientation[0].reshape(-1).tolist() + orientation_vis_supp
+                    + human.orientation[1].reshape(-1).tolist() + orientation_vis_supp)
+    return rows
 
 
 def get_action_from_str(action_str: str):
@@ -280,25 +168,34 @@ def get_dataset_data(src_dir):
     return dataset_data
 
 
-if __name__ == '__main__':
-    app_config = AppConfig()
-    app_config.inference.img_size = ImageSize(1280, 720)
-    model_file_path = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth"
+def main(argv=None):
+    configure_logger()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--src-dir", default="data/videos/ehpi_videos")
+    parser.add_argument("--weights", default=None, help="PedRecNet weights (default: the demo weights)")
+    parser.add_argument("--output", default=None, help="Default: <src-dir>/pedrec_v2_results.pkl")
+    parser.add_argument("--size", default="1280x720", help="Processing size WIDTHxHEIGHT")
+    parser.add_argument("--cpu", action="store_true")
+    args = parser.parse_args(argv)
 
-    src_dir = "data/videos/ehpi_videos/"
-    dataset_dirs = get_dataset_data(src_dir)
+    app_cfg = AppConfig()
+    width, height = args.size.lower().split("x")
+    app_cfg.inference.img_size = ImageSize(int(width), int(height))
+    device = get_device(not args.cpu)
+    cfg = PipelineConfig(use_action=False, pedrec_weights=args.weights, human_min_score=0.65)
+
     result_rows = []
-    for dataset_dir in dataset_dirs:
-        vid_path, action_label = dataset_dir
-        print(f"Working on: {vid_path} ({action_label.name})")
-        input_provider = ImgDirProvider(vid_path)
-        worker = PedRecNetDemoWorker(input_provider, app_config, model_file_path)
-        result_rows += worker.run_impl(vid_path=vid_path.lstrip(src_dir), action_label=action_label)
+    for img_dir, action_label in get_dataset_data(args.src_dir):
+        print(f"Working on: {img_dir} ({action_label.name})")
+        pipeline = PedRecPipeline(cfg, app_cfg, device)  # fresh tracker per video
+        result_rows += video_to_rows(pipeline, img_dir, os.path.relpath(img_dir, args.src_dir), action_label)
 
-    print("Create Pandas DF")
     df = pd.DataFrame(data=result_rows, columns=get_column_names())
-    print("Set datatypes")
     set_df_dtypes(df)
-    print("Save...")
-    df.to_pickle("data/videos/ehpi_videos/pedrec_p2d3d_c_o_h36m_sim_mebow_0_results.pkl")
-    print("Fin.")
+    output = args.output or os.path.join(args.src_dir, "pedrec_v2_results.pkl")
+    df.to_pickle(output)
+    print(f"Wrote {len(df)} rows to {output}")
+
+
+if __name__ == '__main__':
+    main()

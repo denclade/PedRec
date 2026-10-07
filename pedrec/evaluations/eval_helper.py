@@ -3,11 +3,10 @@ import numpy as np
 from pedrec.models.constants.skeleton_coco import SKELETON_COCO_JOINTS
 from pedrec.models.constants.skeleton_h36m import SKELETON_H36M_JOINTS, SKELETON_H36M_HANDFOOTENDS_JOINTS
 from pedrec.models.data_structures import ImageSize
-from pedrec.utils.augmentation_helper import get_affine_transform, affine_transform_pt
+from pedrec.utils.augmentation_helper import get_affine_transform, affine_transform_pt, get_normalization_size
 
 
-def get_total_coords(coords_orig: np.ndarray, model_input_size: ImageSize, centers, scales, rotations,
-                     udp: bool = False):
+def get_total_coords(coords_orig: np.ndarray, model_input_size: ImageSize, centers, scales, rotations):
     """
     Inverts the affine transformation used on the GT img (scale, rotation, bb cut, ...) and returns
     the coordinates in the GT image.
@@ -19,11 +18,9 @@ def get_total_coords(coords_orig: np.ndarray, model_input_size: ImageSize, cente
     :return:
     """
     coords = coords_orig.copy()
-    offset = 1 if udp else 0
-    coords[:, :, 0] *= model_input_size.width - offset
-    coords[:, :, 1] *= model_input_size.height - offset
+    coords[:, :, :2] *= get_normalization_size(model_input_size)
     for i in range(coords.shape[0]):
-        trans = get_affine_transform(centers[i], scales[i], rotations[i], model_input_size, inv=1, udp=udp)
+        trans = get_affine_transform(centers[i], scales[i], rotations[i], model_input_size, inv=1)
         for p in range(coords[i].shape[0]):
             coords[i, p, 0:2] = affine_transform_pt(coords[i, p, 0:2], trans)
     return coords

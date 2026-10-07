@@ -23,7 +23,7 @@ from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.models.constants.sample_method import SAMPLE_METHOD
 from pedrec.models.data_structures import ImageSize
 from pedrec.models.experiments.experiment_paths import ExperimentPaths
-from pedrec.networks.net_pedrec.ehpi_3d_net import Ehpi3DNet
+from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 
 
 import torch
@@ -36,18 +36,6 @@ from pedrec.training.experiments.ehpi3d_variants import get_variant, VARIANTS
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
 from pedrec.training.experiments.experiment_train_helper import init_experiment
 from pedrec.utils.torch_utils.torch_helper import get_device, move_to_device
-
-
-def initialize_from_imgnet(net, pose_resnet_weights_path: str):
-    pose_resnet_state_dict = load_state_dict_file(pose_resnet_weights_path)
-    net_weights = net.state_dict()
-    for name, param in pose_resnet_state_dict.items():
-        net_name = f"feature_extractor.{name}"
-        if net_name in net_weights:
-            net_weights[net_name] = param
-        else:
-            print("Skipped:" + name)
-    net.load_state_dict(net_weights)
 
 
 def get_val_loader(experiment_paths: ExperimentPaths, batch_size, action_list, dataset_cfg: PedRecTemporalDatasetConfig,
@@ -74,7 +62,7 @@ def main(net_weights_path, dataset_cfg: PedRecTemporalDatasetConfig, experiment_
     app_cfg = AppConfig()
     init_experiment(42)
     device = get_device(use_gpu=use_gpu)
-    net = Ehpi3DNet(len(app_cfg.inference.action_list))
+    net = EhpiStGcn(len(app_cfg.inference.action_list))
     net.load_state_dict(load_state_dict_file(net_weights_path))
     net.to(device)
 
@@ -205,7 +193,7 @@ def main(net_weights_path, dataset_cfg: PedRecTemporalDatasetConfig, experiment_
 def get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio, experiment_paths, num_workers, use_gpu):
     balanced_acc, map, cf1, cp, cr, of1, op, or_ = main(weights_path, pedrec_cfg, experiment_paths, num_workers, use_gpu)
     experiment_name = Path(weights_path).stem\
-        .replace('ehpi_3d_sim_c01_actionrec_', '')\
+        .replace('ehpi_stgcn_sim_c01_actionrec_', '')\
         .replace('gt', 'G')\
         .replace('pred', 'P')\
         .replace('ehpi2dvids', 'E')\

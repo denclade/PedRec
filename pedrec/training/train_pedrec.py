@@ -1,10 +1,12 @@
 """
-Unified training entry point for the PedRecNet.
-
-Replaces the former ``experiment_pedrec_*.py`` scripts: every training stage of the original experiment chain is
-described in ``pedrec.training.experiments.pedrec_stages`` and can be trained via
+Training of the PedRecNet (v2) along the stage chain of the original experiments
+(``pedrec.training.experiments.pedrec_stages``):
 
     python pedrec/training/train_pedrec.py --stage p2d3d_c_o_h36m_sim_mebow
+
+Checkpoints are written as ``experiment_pedrec_v2_<stage>_<cycle>.pth``. If the v2 checkpoint of the predecessor stage
+does not exist, the published v1 checkpoint ``experiment_pedrec_<stage>_0.pth`` is used for the initialization
+(backbone, decoder and pose heads are identical), so the v2 network is fine-tuned from the published chain.
 
 Run ``--list`` to see all stages and their dependencies. Dataset and checkpoint paths are derived from the data root
 (``--data-dir`` or the ``PEDREC_DATA_DIR`` environment variable, default ``data``).
@@ -26,11 +28,10 @@ import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import OneCycleLR
 
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
-from pedrec.configs.pedrec_net_config import PedRecArchConfig, ARCH_PRESETS, get_arch_preset
+from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.experiment_round_description import ExperimentRoundDescription
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
-from pedrec.networks.net_pedrec.pedrec_net_factory import pedrec_config, save_arch
 from pedrec.networks.net_pedrec.pedrec_net_mtl_wrapper import PedRecNetMTLWrapper
 from pedrec.training.experiments.experiment_dataset_helper import get_validation_sets, get_train_loader
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape, \
@@ -69,21 +70,14 @@ def get_preds_mtl(outputs):
     }
 
 
-STRONG_AUGMENTATION = {"half_body_prob": 0.3, "random_erasing_prob": 0.3, "color_jitter": 0.2}
-
-
 def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, batch_size: int,
-                               num_workers: int, arch: PedRecArchConfig = None, augmentation: str = "original",
-                               dataset_sampling_weights=None) -> ExperimentDescription:
-    arch = arch or PedRecArchConfig()
-    if arch.name != "v1":
-        experiment_paths.checkpoint_prefix = f"experiment_pedrec_{arch.name}"
+                               num_workers: int, dataset_sampling_weights=None) -> ExperimentDescription:
     description = ExperimentDescription(
-        net_name=f"PedRecNet ({arch.name})",
+        net_name="PedRecNet v2",
         experiment_name=os.path.basename(experiment_paths.get_stage_file_base(stage.name)),
         initialization_notes=f"Initialized from {stage.init_from}",
         experiment_paths=experiment_paths,
-        net_cfg=pedrec_config(arch),
+        net_cfg=PedRecNet50Config(),
         dataset_sampling_weights=dataset_sampling_weights,
         use_train_coco=stage.train_coco,
         use_train_h36m=stage.train_h36m,
@@ -108,30 +102,17 @@ def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, bat
     if stage.mebow_train:
         # orientation labels are not rotation invariant
         description.coco_train_dataset_cfg.rotation_factor = 0
-    for dataset_cfg in (description.coco_train_dataset_cfg, description.coco_val_dataset_cfg,
-                        description.sim_train_dataset_cfg, description.sim_val_dataset_cfg,
-                        description.h36m_train_dataset_cfg, description.h36m_val_dataset_cfg,
-                        description.tud_train_dataset_cfg, description.tud_val_dataset_cfg):
-        dataset_cfg.udp = arch.udp
-    if augmentation == "strong":
-        for dataset_cfg in (description.coco_train_dataset_cfg, description.sim_train_dataset_cfg,
-                            description.h36m_train_dataset_cfg, description.tud_train_dataset_cfg):
-            for key, value in STRONG_AUGMENTATION.items():
-                setattr(dataset_cfg, key, value)
     return description
 
 
 def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, device: torch.device,
               init_weights_path: str = None) -> PedRecNetMTLWrapper:
-    arch = description.net_cfg.arch
     net = PedRecNet(description.net_cfg)
     net.init_weights()
     loss_head = PedRecNetLossHead(device,
                                   use_p3d_loss=stage.use_p3d_loss,
                                   use_orientation_loss=stage.use_orientation_loss,
-                                  use_conf_loss=stage.use_conf_loss,
-                                  weighting=arch.mtl_weighting,
-                                  orientation_head=arch.orientation_head)
+                                  use_conf_loss=stage.use_conf_loss)
     net = PedRecNetMTLWrapper(net, loss_head)
 
     paths = description.experiment_paths
@@ -139,18 +120,16 @@ def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, de
         logger.info(f"Initializing from {init_weights_path}")
         initialize_weights_with_same_name_and_shape(net, init_weights_path)
     elif stage.init_from == POSE_RESNET_INIT:
-        if arch.backbone != "resnet50":
-            logger.info(f"Backbone {arch.backbone}: ImageNet initialization only (pretrained={arch.backbone_pretrained})")
-        else:
-            logger.info(f"Initializing from pose-resnet weights {paths.pose_resnet_weights_path}")
-            initialize_pose_resnet(net, paths.pose_resnet_weights_path)
+        logger.info(f"Initializing from pose-resnet weights {paths.pose_resnet_weights_path}")
+        initialize_pose_resnet(net, paths.pose_resnet_weights_path)
     else:
         predecessor = paths.get_stage_checkpoint_path(stage.init_from)
-        if not os.path.isfile(predecessor) and paths.checkpoint_prefix != "experiment_pedrec":
-            # e.g. v2: start from the original (v1) chain, all layers with matching names / shapes are reused
+        if not os.path.isfile(predecessor):
+            # start from the published (v1) chain: backbone, decoder and pose heads are reused, the new orientation
+            # and confidence heads keep their initialization
             v1_predecessor = os.path.join(paths.output_dir, f"experiment_pedrec_{stage.init_from}_0.pth")
             if os.path.isfile(v1_predecessor):
-                logger.info(f"No {arch.name} checkpoint for '{stage.init_from}', using the v1 checkpoint")
+                logger.info(f"No v2 checkpoint for '{stage.init_from}', initializing from the v1 checkpoint")
                 predecessor = v1_predecessor
         if not os.path.isfile(predecessor):
             raise FileNotFoundError(
@@ -229,7 +208,7 @@ def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, feature_extractor_di
 class StageState:
     """
     Everything needed to continue an interrupted stage training (``--resume``) plus the best epoch bookkeeping.
-    Written after every epoch to ``experiment_pedrec_<stage>_<cycle>_state.pth``.
+    Written after every epoch to ``experiment_pedrec_v2_<stage>_<cycle>_state.pth``.
     """
 
     def __init__(self, path: str):
@@ -297,7 +276,6 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         name = f"round {round_idx + 1} epoch {epoch + 1}"
         if stage_state.best.update(results.validation_results, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
-            save_arch(best_checkpoint_path, description.net_cfg.arch)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "
                         f"{best_checkpoint_path}")
         stage_state.save(round_idx, epoch, net, ema, round_description, stepper, description.suggested_lr)
@@ -307,7 +285,6 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         device, log=True, options=options, ema=ema, start_epoch=start_epoch, on_epoch_end=on_epoch_end,
         stepper_state=stepper_state)
     torch.save(_final_weights(net, ema), checkpoint_path)
-    save_arch(checkpoint_path, description.net_cfg.arch)
     logger.info(f"Saved checkpoint {checkpoint_path}" + (" (EMA weights)" if ema is not None else ""))
 
 
@@ -343,7 +320,7 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
                 f"effective batch size {description.batch_size * options.accumulate}")
 
     # Append the MTL weighting parameters AFTER the LR range test.
-    params.append({'params': net.loss_head.weighting_parameters(), 'weight_decay': 1e-2})
+    params.append({'params': [net.loss_head.log_vars], 'weight_decay': 1e-2})
 
     ema = TrainStepper.create_ema(net, options)
     if stage_state.loaded is not None:
@@ -415,20 +392,11 @@ def parse_args(argv=None):
                         help="Training cycle; cycle > 0 continues from the checkpoint of cycle - 1 (default: 0).")
     parser.add_argument("--skip-round-1", action="store_true",
                         help="Load the round 1 checkpoint (*_01.pth) instead of training round 1.")
-    parser.add_argument("--arch", choices=sorted(ARCH_PRESETS.keys()), default="v1",
-                        help="Network architecture: v1 = published PedRecNet, v2 = circular orientation head, heatmap "
-                             "joint confidence, Kendall MTL weighting, UDP (initialized from the v1 checkpoints).")
-    parser.add_argument("--backbone", default=None,
-                        help="Backbone: resnet50 (default) or timm:<name>, e.g. timm:convnext_tiny, "
-                             "timm:vit_base_patch16_224 (ImageNet weights via timm).")
-    parser.add_argument("--augmentation", choices=["original", "strong"], default=None,
-                        help="original (v1 default) or strong (+ half body crops, random erasing, color jitter; "
-                             "default for other architectures).")
     parser.add_argument("--dataset-weights", default=None,
                         help="Balance the training datasets, e.g. coco=1,h36m=1,sim=1 (relative sampling "
                              "probability of each dataset, independent of its size).")
     parser.add_argument("--resume", action="store_true",
-                        help="Continue an interrupted training from <output-dir>/experiment_pedrec_<stage>_<cycle>_state.pth.")
+                        help="Continue an interrupted training from <output-dir>/experiment_pedrec_v2_<stage>_<cycle>_state.pth.")
     stability = parser.add_argument_group("numerics / stability")
     stability.add_argument("--amp", choices=["auto", "bf16", "fp16", "off"], default="auto",
                            help="Mixed precision (default auto: bf16 on GPUs that support it, e.g. RTX 30xx-50xx). "
@@ -457,14 +425,12 @@ def main(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
     if args.output_dir is not None:
         experiment_paths.output_dir = args.output_dir
-    arch = get_arch_preset(args.arch, args.backbone)
-    augmentation = args.augmentation or ("original" if arch.name == "v1" else "strong")
     dataset_weights = None
     if args.dataset_weights:
         dataset_weights = {k.strip(): float(v) for k, v in (item.split("=") for item in args.dataset_weights.split(","))}
     description = get_experiment_description(stage, experiment_paths,
                                              batch_size=args.batch_size or stage.batch_size,
-                                             num_workers=args.num_workers, arch=arch, augmentation=augmentation,
+                                             num_workers=args.num_workers,
                                              dataset_sampling_weights=dataset_weights)
     init_experiment(description.seed)
     device = get_device(use_gpu=not args.cpu)

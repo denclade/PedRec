@@ -112,7 +112,7 @@ def cli(argv=None):
     from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
     args = parse_args(argv)
     experiment_paths = get_experiment_paths(args.data_dir)
-    experiment_name = f"experiment_pedrec_{args.experiment}_0"
+    experiment_name = os.path.splitext(os.path.basename(experiment_paths.get_stage_checkpoint_path(args.experiment)))[0]
     if args.split == "train":
         dataset_dir, dataset_filename, prefix = experiment_paths.sim_c01_dir, experiment_paths.sim_c01_filename, "C01F_train_pred_df"
     else:

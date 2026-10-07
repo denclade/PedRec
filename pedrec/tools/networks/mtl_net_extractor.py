@@ -14,7 +14,6 @@ import os
 
 import torch
 
-from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
@@ -33,8 +32,8 @@ def mtl_to_net(mtl_wrapper: torch.nn.Module, mtl_path: str, output_path: str):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stage", default=None,
-                        help="Training stage name; reads <output-dir>/experiment_pedrec_<stage>_<cycle>.pth and "
-                             "writes <data-dir>/models/pedrec/experiment_pedrec_<stage>_<cycle>_net.pth.")
+                        help="Training stage name; reads <output-dir>/experiment_pedrec_v2_<stage>_<cycle>.pth and "
+                             "writes <data-dir>/models/pedrec/experiment_pedrec_v2_<stage>_<cycle>_net.pth.")
     parser.add_argument("--cycle", type=int, default=0)
     parser.add_argument("--input", default=None, help="Explicit MTL checkpoint path.")
     parser.add_argument("--output", default=None, help="Explicit output path.")
@@ -56,12 +55,8 @@ def main(argv=None):
                                    os.path.basename(mtl_weights).replace(".pth", "_net.pth"))
     else:
         output_path = os.path.splitext(mtl_weights)[0] + "_net.pth"
-    arch = load_arch(mtl_weights)
-    net = PedRecNetMTLWrapper(PedRecNet(pedrec_config(arch)),
-                              PedRecNetLossHead(get_device(False), weighting=arch.mtl_weighting,
-                                                orientation_head=arch.orientation_head))
+    net = PedRecNetMTLWrapper(PedRecNet(PedRecNet50Config()), PedRecNetLossHead(get_device(False)))
     mtl_to_net(net, mtl_weights, output_path)
-    copy_arch(mtl_weights, output_path)
 
 
 if __name__ == "__main__":

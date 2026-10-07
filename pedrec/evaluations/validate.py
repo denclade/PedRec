@@ -49,70 +49,6 @@ def get_outputs_loss_mtl(net: nn.Module, model_input: torch.Tensor, labels: torc
     return net(model_input, labels)
 
 
-# def main(pose_weights: str):
-#     configure_logger()
-#     logger = logging.getLogger(__name__)
-#     app_cfg = AppConfig()
-#     dataset_cfg_coco = get_coco_dataset_cfg_default()
-#     dataset_cfg_sim = get_sim_dataset_cfg_default()
-#     dataset_cfg_h36m = get_h36m_dataset_cfg_default()
-#     dataset_cfg_h36m.rotation_factor = 30
-#     net_cfg = PedRecNet50Config()
-#     device = get_device(app_cfg.cuda.use_gpu)
-#
-#     cudnn.benchmark = False
-#     torch.backends.cudnn.deterministic = True
-#     torch.backends.cudnn.benchmark = False
-#
-#     # Data loading code
-#     trans = transforms.Compose([
-#         transforms.ToTensor(),
-#         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-#     ])
-#
-#     net: PedRecNet = init_pose_model(PedRecNet(net_cfg), pose_weights, logger, device)
-#     net.to(device)
-#
-#     val_set = PedRecDataset("data/datasets/Human3.6m/val", "h36m_val", DatasetType.VALIDATE,
-#                             dataset_cfg_h36m, net_cfg.model.input_size, ImageSize(1000, 1000), trans)
-#
-#     print(get_heading("RT3DROM!!", 1))
-#     val_set = PedRecDataset("data/datasets/ROM/", "rt_rom_01",
-#                             DatasetType.TRAIN, dataset_cfg_sim, net_cfg.model.input_size, ImageSize(1920, 1080),
-#                             trans)
-#     val_loader = DataLoader(val_set, batch_size=64, num_workers=12)
-#     print_results(validate(net, val_loader, get_outputs_loss_pedrec, get_pedrec_preds, device, net_cfg.model.input_size))
-#
-#     print(get_heading("MS_COCO", 1))
-#     val_set = CocoDataset("data/datasets/COCO",
-#                           DatasetType.VALIDATE,
-#                           dataset_cfg_coco,
-#                           net_cfg.model.input_size,
-#                           trans)
-#     val_loader = DataLoader(val_set, batch_size=64, num_workers=12)
-#     print_results(
-#         validate(net, val_loader, get_outputs_loss_pedrec, get_pedrec_preds, device, net_cfg.model.input_size, validate_3D=False, validate_orientation=False))
-#
-#     print(get_heading("Human 3.6M", 1))
-#     val_set = PedRecDataset("data/datasets/Human3.6m/val", "h36m_val", DatasetType.VALIDATE,
-#                             dataset_cfg_h36m, net_cfg.model.input_size, ImageSize(1000, 1000), trans)
-#     val_loader = DataLoader(val_set, batch_size=64, num_workers=12)
-#     joints_not_available = [SKELETON_PEDREC_JOINT.nose.value,
-#                             SKELETON_PEDREC_JOINT.left_ear.value,
-#                             SKELETON_PEDREC_JOINT.right_ear.value,
-#                             SKELETON_PEDREC_JOINT.left_eye.value,
-#                             SKELETON_PEDREC_JOINT.right_eye.value]
-#     print_results(validate(net, val_loader, get_outputs_loss_pedrec, get_pedrec_preds, device, net_cfg.model.input_size, validate_orientation=False),
-#                   joints_not_available=joints_not_available)
-#
-#     print(get_heading("RT3DValidate", 1))
-#     val_set = PedRecDataset("data/datasets/RT3DValidate/", "rt_validate_3d",
-#                             DatasetType.VALIDATE, dataset_cfg_sim, net_cfg.model.input_size, ImageSize(1920, 1080),
-#                             trans)
-#     val_loader = DataLoader(val_set, batch_size=64, num_workers=12)
-#     print_results(validate(net, val_loader, get_outputs_loss_pedrec, get_pedrec_preds, device, net_cfg.model.input_size))
-
-
 def get_pair_mask(joints_to_mask: List[int]):
     mask = []
     for pair in SKELETON_PEDREC_PARENT_CHILD_PAIRS:
@@ -133,8 +69,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
              validate_3D: bool = True,
              validate_orientation: bool = True,
              validate_pose_conf: bool = True,
-             validate_env_position: bool = True,
-             udp: bool = False) -> ValidationResults:
+             validate_env_position: bool = True) -> ValidationResults:
     start = time.time()
     loss_total = 0.0
     net.eval()
@@ -164,7 +99,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
             centers = labels["center"].cpu().detach().numpy()
             scales = labels["scale"].cpu().detach().numpy()
             rotations = labels["rotation"].cpu().detach().numpy()
-            pose2d_gt = get_total_coords(pose2d_gt, model_input_size, centers, scales, rotations, udp)
+            pose2d_gt = get_total_coords(pose2d_gt, model_input_size, centers, scales, rotations)
 
             pose3d_gt = labels["skeleton_3d"].cpu().detach().numpy()
             pose3d_gt[:, :, :3] = pose3d_gt[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2) # to cm
@@ -173,7 +108,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
 
             if validate_2D:
                 pose2d_pred = preds["skeleton"]
-                pose2d_pred = get_total_coords(pose2d_pred, model_input_size, centers, scales, rotations, udp)
+                pose2d_pred = get_total_coords(pose2d_pred, model_input_size, centers, scales, rotations)
                 pose2d_gts.append(pose2d_gt)
                 pose2d_preds.append(pose2d_pred)
             if validate_3D:

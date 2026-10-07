@@ -17,7 +17,7 @@ import torch
 from sklearn.metrics import average_precision_score, recall_score
 from torchvision import transforms
 
-from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
@@ -26,7 +26,6 @@ from pedrec.utils.augmentation_helper import get_affine_transforms
 from pedrec.utils.bb_helper import get_center_bb_from_coord_bb, \
     bb_to_center_scale
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
-from pedrec.utils.demo_helper import init_pose_model
 from pedrec.utils.torch_utils.torch_helper import get_device
 
 pose_transform = transforms.Compose([
@@ -132,7 +131,6 @@ def main(argv=None):
     # Pose
     pose_cfg = PedRecNet50Config()
     net = load_pedrec_net(pedrecnet_weights, device)
-    udp = net.cfg.arch.udp
     corrects = 0
     distances = []
     bin_gt = {}
@@ -144,7 +142,7 @@ def main(argv=None):
         img = cv2.cvtColor(cv2.imread(annotation["img_path"]), cv2.COLOR_BGR2RGB)
         center, scale = bb_to_center_scale(annotation["bb"], cfg.model.input_size)
         rotation = 0
-        trans, trans_inv = get_affine_transforms(center, scale, rotation, cfg.model.input_size, add_inv=True, udp=udp)
+        trans, trans_inv = get_affine_transforms(center, scale, rotation, cfg.model.input_size, add_inv=True)
         # Crop smaller image of people
         model_input = cv2.warpAffine(
             img,

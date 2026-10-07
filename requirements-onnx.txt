@@ -1,6 +1,0 @@
-# Optional: ONNX export (pedrec/tools/networks/export_onnx.py) and the onnxruntime backend (demo.py --backend onnx).
-# onnxruntime-gpu provides the CUDA and (with an installed TensorRT) the TensorRT execution provider.
-onnx~=1.23.2
-onnxscript~=0.7.2
-onnxruntime-gpu~=1.30.0; sys_platform != "darwin"
-onnxruntime~=1.30.0; sys_platform == "darwin"

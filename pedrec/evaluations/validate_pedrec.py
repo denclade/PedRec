@@ -16,7 +16,7 @@ import argparse
 import torch
 import torchvision.transforms as transforms
 
-from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs import default_paths
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
@@ -40,11 +40,8 @@ def get_preds_mtl(outputs):
 
 
 def load_net(weights_path: str, device: torch.device) -> PedRecNetMTLWrapper:
-    """Training checkpoint (MTL wrapper) or exported *_net.pth; the architecture comes from the sidecar file."""
-    arch = load_arch(weights_path)
-    net = PedRecNetMTLWrapper(load_pedrec_net(weights_path, device, arch),
-                              PedRecNetLossHead(device, weighting=arch.mtl_weighting,
-                                                orientation_head=arch.orientation_head))
+    """Training checkpoint (MTL wrapper) or exported *_net.pth."""
+    net = PedRecNetMTLWrapper(load_pedrec_net(weights_path, device), PedRecNetLossHead(device))
     state_dict = load_state_dict_file(weights_path)
     if any(key.startswith("loss_head.") for key in state_dict.keys()):
         net.load_state_dict(state_dict)
@@ -76,7 +73,7 @@ def main(argv=None):
         experiment_name="validate_pedrec",
         initialization_notes=f"Loaded from {weights}",
         experiment_paths=experiment_paths,
-        net_cfg=pedrec_config(load_arch(weights)),
+        net_cfg=PedRecNet50Config(),
         use_val_coco=not args.no_coco,
         use_val_sim=not args.no_sim,
         use_val_h36m=not args.no_h36m,
@@ -91,9 +88,6 @@ def main(argv=None):
         num_workers=args.num_workers,
     )
     experiment_description.coco_val_dataset_cfg.use_mebow_orientation = True
-    for dataset_cfg in (experiment_description.coco_val_dataset_cfg, experiment_description.sim_val_dataset_cfg,
-                        experiment_description.h36m_val_dataset_cfg):
-        dataset_cfg.udp = experiment_description.net_cfg.arch.udp
     init_experiment(experiment_description.seed)
     device = get_device(use_gpu=not args.cpu)
     net = load_net(weights, device)
@@ -104,8 +98,7 @@ def main(argv=None):
     ])
     validation_sets = get_validation_sets(experiment_description, trans)
     validation_results = validate_val_sets(net, validation_sets, get_outputs_loss_mtl, get_preds_mtl, device,
-                                           experiment_description.net_cfg.model.input_size,
-                                           udp=experiment_description.net_cfg.arch.udp)
+                                           experiment_description.net_cfg.model.input_size)
     for name, results in validation_results.items():
         print(f"\n### {name}")
         print_results(results)
