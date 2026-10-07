@@ -51,9 +51,10 @@ class SkeletonView2p5D(gl.GLViewWidget):
         joints, joint_colors = get_joint_positions(skeleton)
         limbs, limb_colors = get_limb_positions(skeleton)
         if self.current_joints is None:
-            self.current_joints = gl.GLScatterPlotItem(size=7, pxMode=True)
+            # pyqtgraph blends points / lines additively by default, which makes them invisible on a light background
+            self.current_joints = gl.GLScatterPlotItem(size=8, pxMode=True, glOptions="translucent")
             self.addItem(self.current_joints)
-            self.current_limbs = gl.GLLinePlotItem(mode="lines", width=3, antialias=True)
+            self.current_limbs = gl.GLLinePlotItem(mode="lines", width=3, antialias=True, glOptions="translucent")
             self.addItem(self.current_limbs)
         self.current_joints.setData(pos=joints.reshape(-1, 3), color=joint_colors.reshape(-1, 4))
         self.current_limbs.setData(pos=limbs.reshape(-1, 3), color=limb_colors.reshape(-1, 4))
