@@ -1,9 +1,23 @@
 # Review: PedRecNet, EHPI3D und Inferenz-Pipeline
 
-Stand: Oktober 2026. Reines Review, keine der hier beschriebenen Änderungen wurde umgesetzt. Bewertet wird der Code in
+Stand: Oktober 2026. Ursprünglich reines Review; den Umsetzungsstand zeigt der folgende Abschnitt. Bewertet wird der Code in
 `pedrec/networks`, `pedrec/utils/torch_utils`, `pedrec/tracking`, `pedrec/utils/pose_deconv_helper.py`,
 `pedrec/utils/ehpi_helper.py` und die Trainingsprozedur in `pedrec/training`. Referenzpunkt sind die in 2024 bis 2026
 etablierten Standards für 2D/3D-Pose, Orientierung, skelettbasierte Aktionserkennung, Detektion und Tracking.
+
+## Umsetzungsstand
+
+| Prio | Maßnahme | Status |
+| --- | --- | --- |
+| 1 | `inference_mode`, ein PedRecNet-Batch pro Frame, GPU-NMS, gebatchte Rücktransformation | umgesetzt (`pedrec/inference`), äquivalent zum Original getestet |
+| 2 | Orientierung als (cos, sin) / zirkuläre Klassifikation, `BCEWithLogitsLoss` | offen, braucht Retraining → separater Branch; Loss-Heads laufen bereits in fp32 |
+| 3 | Best-Checkpoint, EMA, AMP, NumPy-Seed, Gradient-Clipping, Resume, NaN-Schutz | umgesetzt (`train_stepper.py`, `train_pedrec.py`, `train_ehpi3d.py`) |
+| 4 | ONNX/TensorRT-Export, `torch.compile`, `channels_last`, GPU-Preprocessing | umgesetzt (`export_onnx.py`, `--backend onnx`, `--fast`, `--compile`) |
+| 5 | ByteTrack-artiger Tracker, One-Euro-Filter | umgesetzt, neuer Standard; Original-Tracker per `--tracker legacy` |
+| 6-10 | Detektor, Konfidenz-Head, Backbone, EHPI3D, 3D-Schätzung | separater Branch (Retraining nötig) |
+
+Zusätzlich: Python 3.14 und aktuelle Pakete (torch 2.14 mit CUDA 13 und sm_120 für RTX 50xx, numpy 2.5, pandas 3.0,
+PyQt6), kompatibel mit den veröffentlichten Gewichten und Dataframes.
 
 ## 1. Zusammenfassung
 

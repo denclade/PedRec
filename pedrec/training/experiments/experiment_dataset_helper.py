@@ -76,7 +76,8 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
         raise ValueError("No training set! Check experiment config")
 
     train_set = ConcatDataset(train_sets)
-    train_loader = DataLoader(train_set, batch_size=experiment_description.batch_size, shuffle=True, num_workers=experiment_description.num_workers,
+    train_loader = DataLoader(train_set, batch_size=experiment_description.batch_size, shuffle=True, num_workers=experiment_description.num_workers, pin_memory=True,
+                              persistent_workers=experiment_description.num_workers > 0,
                               worker_init_fn=worker_init_fn)
     return train_loader
 
@@ -91,7 +92,8 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
         coco_val_full_length = len(coco_val)
         coco_val = get_subsampled_dataset(coco_val, experiment_description.coco_val_subsampling)
         coco_loader = DataLoader(coco_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                 num_workers=experiment_description.num_workers, worker_init_fn=worker_init_fn)
+                                 num_workers=experiment_description.num_workers, pin_memory=True,
+                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
         validation_sets.append(ValidationSet(name="COCO", loader=coco_loader,
                                              val_set_cfg=None,
                                              validate_2D=experiment_description.validate_2d_coco,
@@ -110,7 +112,8 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
         tud_val_full_length = len(tud_val)
         tud_val = get_subsampled_dataset(tud_val, experiment_description.tud_val_subsampling)
         tud_loader = DataLoader(tud_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                 num_workers=experiment_description.num_workers, worker_init_fn=worker_init_fn)
+                                 num_workers=experiment_description.num_workers, pin_memory=True,
+                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
         validation_sets.append(ValidationSet(name="TUD", loader=tud_loader,
                                              val_set_cfg=None,
                                              validate_2D=False,
@@ -128,7 +131,8 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                 experiment_description.net_cfg.model.input_size,
                                 trans)
         sim_loader = DataLoader(sim_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                num_workers=experiment_description.num_workers, worker_init_fn=worker_init_fn)
+                                num_workers=experiment_description.num_workers, pin_memory=True,
+                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
         validation_sets.append(ValidationSet(name="SIM", loader=sim_loader,
                                              val_set_cfg=experiment_description.sim_val_dataset_cfg,
                                              validate_2D=experiment_description.validate_2d_sim,
@@ -147,7 +151,8 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                  DatasetType.VALIDATE, experiment_description.h36m_val_dataset_cfg,
                                  experiment_description.net_cfg.model.input_size, trans)
         h36m_loader = DataLoader(h36m_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                 num_workers=experiment_description.num_workers, worker_init_fn=worker_init_fn)
+                                 num_workers=experiment_description.num_workers, pin_memory=True,
+                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
         validation_sets.append(ValidationSet(name="H36M", loader=h36m_loader,
                                              val_set_cfg=experiment_description.h36m_val_dataset_cfg,
                                              validate_2D=experiment_description.validate_2d_h36m,

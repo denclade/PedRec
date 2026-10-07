@@ -29,11 +29,25 @@ The repository uses [mise](https://mise.jdx.dev) as task runner and environment 
 evaluation, tools) are available as `mise` tasks (`mise tasks` lists them) and as plain Python scripts with `--help`.
 
 ```bash
-mise install                 # pinned Python 3.9 + uv
-mise run setup               # .venv with torch 1.10.1 (CUDA 11.3 wheels); "setup:cpu" for CPU-only wheels
+mise install                 # pinned Python 3.14 + uv
+mise run setup               # .venv with PyTorch 2.14 (CUDA 13.0), PyQt6, ...; see below for other CUDA versions
+mise run gpu:info            # check that PyTorch sees the GPU
 mise run download:models     # YoloV4, PedRecNet, EHPI3D and pose-resnet weights -> data/models
 mise run demo --video my_video.mp4
+mise run test                # unit tests (no data / GPU needed)
 ```
+
+### GPU / CUDA
+The code runs on current consumer GPUs incl. the RTX 50xx (Blackwell, e.g. RTX 5070 / 5080, compute capability 12.0):
+
+| Task | PyTorch wheels | NVIDIA driver |
+| --- | --- | --- |
+| `mise run setup` | PyPI (Linux): CUDA 13.0, sm_75 - sm_120 | >= 580 |
+| `mise run setup:cu128` | CUDA 12.8 (also the GPU build for Windows) | >= 570 |
+| `mise run setup:cpu` | CPU only | - |
+
+Training uses bf16 mixed precision by default (`--amp`), the default batch size of 48 fits into 12 GB; with less memory
+use e.g. `--batch-size 24 --accumulate 2` (same effective batch size).
 
 Data (datasets, models, demo videos) live below the data root, `./data` by default. Change it via the
 `PEDREC_DATA_DIR` environment variable, e.g. in a git-ignored `mise.local.toml`:
@@ -44,9 +58,17 @@ PEDREC_DATA_DIR = "/mnt/storage/pedrec_data"
 ```
 
 ## Manual installation (without mise)
-- Python 3.9 (venv suggested), working CUDA / CUDNN
-- `pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113`
+- Python 3.12 or newer (3.14 tested), venv suggested
+- `pip install -r requirements.txt` (plus `requirements-onnx.txt` for the ONNX / TensorRT backend,
+  `requirements-dev.txt` for the tests)
 - Run the scripts from the repository root, e.g. `python pedrec/demo.py --help`
+
+## Compatibility with the original data and weights
+All published weights (YoloV4, PedRecNet, EHPI3D, training checkpoints, pose-resnet) and datasets / dataframes work
+unchanged. The dataframes were pickled with pandas 1.3 / numpy 1.21; they are read through
+`pedrec.utils.pandas_helper.read_pedrec_df`, which converts numeric categorical columns that current pandas can not
+sum (tested with fixtures written by the original versions, `tests/data`). Optionally rewrite them once with the
+current versions: `mise run tools:convert-dfs data/datasets/ROMb/rt_rom_01b.pkl ...` (keeps a `.bak` copy).
 
 ## Required Data
 ### Pretrained models
@@ -104,15 +126,27 @@ network can be run on their own.
 | --- | --- |
 | `mise run demo` | Qt GUI on the default demo video (`--video`, `--images`, `--image`, `--webcam` select the input) |
 | `mise run demo:video <file>` / `demo:images <dir>` / `demo:image <file>` / `demo:webcam [id]` | Qt GUI on the given input |
+| `mise run demo:fast` | GUI with fp16 autocast + channels_last (Tensor Cores) |
+| `mise run demo:onnx` | GUI with the ONNX models on onnxruntime (TensorRT / CUDA), after `mise run export:onnx` |
 | `mise run demo:headless --video in.mp4 --output out.mp4 --json out.json` | Full pipeline without GUI, writes an annotated video / images and all results as JSON |
 | `mise run demo:detector --video in.mp4 --output out.mp4` | YoloV4 detector only |
 | `mise run demo:pose --image person.jpg --output out.jpg --json out.json` | PedRecNet only: 2D / 3D pose + orientation on the full frame (no detector, tracking, actions) |
 | `mise run demo:detector-pose --video in.mp4 --output out.mp4` | Detector + PedRecNet without tracking / actions |
 | `mise run demo:no-action` | GUI without action recognition |
+| `mise run bench` | Per stage timings and comparison with the original implementation (`--fast`, `--video`, `--random-weights`) |
 
-Useful options (see `python pedrec/demo.py --help`): `--no-detector`, `--no-pose`, `--no-tracking`, `--no-action`,
-`--size WxH`, `--cpu`, `--max-frames N`, `--*-weights` to use other checkpoints, `--action-list c01|c01_real`.
-The pipeline itself lives in `pedrec/inference/pipeline.py` (`PedRecPipeline`) and can be embedded in your own code.
+Useful options (see `python pedrec/demo.py --help`):
+- components: `--no-detector`, `--no-pose`, `--no-tracking`, `--no-action`, `--action-list c01|c01_real`
+- tracking: `--tracker bytetrack` (default: Kalman filter + two stage IoU association, keeps ids through short
+  occlusions) or `--tracker legacy` (original optical flow + pose similarity merging); `--smoothing one_euro` (default)
+  / `mean` (original 2 frame mean) / `none` for the 3D pose and orientations
+- speed: `--fast` (= `--half --channels-last`), `--compile`, `--backend onnx`, `--prefetch N`, `--cpu`
+- `--size WxH`, `--max-frames N`, `--*-weights` to use other checkpoints
+
+The pipeline (`pedrec/inference/pipeline.py`, `PedRecPipeline`) can be embedded in your own code. It uploads every
+frame once and runs the person crops, normalization, NMS and coordinate transformations batched on the GPU; PedRecNet
+runs exactly once per frame (the original code ran it a second time for tracked but undetected persons). The optimized
+crops / pose / YOLO decoding are tested against the original implementation (`tests/test_inference_equivalence.py`).
 
 # Training
 ## PedRecNet
@@ -129,10 +163,24 @@ mise run train:pedrec --stage p2d3d_c_o_h36m_sim_mebow --init-weights my_checkpo
 
 Shortcuts for the main milestones: `train:pedrec:2d`, `train:pedrec:3d`, `train:pedrec:conf`, `train:pedrec:orientation`.
 Each stage trains two rounds (frozen backbone, then full network with reduced learning rates), writes the checkpoints
-`experiment_pedrec_<stage>_0_01.pth` / `experiment_pedrec_<stage>_0.pth` and a markdown protocol into
-*data/models/pedrec/single_results/*. Stages without a fixed learning rate run the LR range test first (plot saved next
+`experiment_pedrec_<stage>_0_01.pth` / `experiment_pedrec_<stage>_0.pth` (EMA weights), the best epoch
+`experiment_pedrec_<stage>_0_best.pth` and a markdown protocol into *data/models/pedrec/single_results/*. Stages without a fixed learning rate run the LR range test first (plot saved next
 to the checkpoint); `--lr` skips it, `--lr-finder` forces it. The demo needs the plain network weights, extract them
 with `mise run tools:extract-net --stage <stage>`.
+
+Training stability options (PedRecNet and EHPI3D):
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `--amp auto/bf16/fp16/off` | auto (bf16 on RTX 30xx-50xx) | mixed precision; loss heads always in fp32, `off` = original fp32 training |
+| `--grad-clip N` | 10 | clip the global gradient norm |
+| `--accumulate N` | 1 | gradient accumulation for GPUs with less memory |
+| `--ema-decay D` | 0.9998 (EHPI3D 0.999) | exponential moving average of the weights, used for validation and the checkpoints |
+| `--resume` | - | continue an interrupted stage from `experiment_pedrec_<stage>_<cycle>_state.pth` (written every epoch) |
+
+Steps with a non-finite loss or gradient are skipped (the run stops after 50 in a row). The best epoch is selected by
+the mean relative improvement of all validation metrics (PCK, MPJPE, joint accuracy, orientation errors) compared to
+the first epoch.
 
 ## EHPI3D (action recognition)
 ```bash
@@ -154,11 +202,14 @@ PedRecNet.
 | `mise run eval:ehpi3d --variants gt_pred_64frames` | Action recognition metrics on SIM-C01 |
 | `mise run results:coco` / `results:h36m` / `results:sim-c01` | Write PedRecNet result dataframes (`--experiments <stages>`) |
 | `mise run export:coco` / `export:h36m` / `export:sim-c01` | Markdown / LaTeX result tables from the result dataframes (as used in `doc/diss_eval`) |
+| `mise run export:onnx` | Export YoloV4 / PedRecNet / EHPI3D to ONNX and verify them against PyTorch |
 
 # Project structure
 ```
 pedrec/demo.py                  demo / inference CLI (GUI + headless)
 pedrec/inference/pipeline.py    PedRecPipeline: detector -> pose -> tracking -> actions
+pedrec/inference/gpu_ops.py     batched device side crops, resize, NMS, coordinate transforms
+pedrec/tracking/                ByteTrack style tracker, One Euro filter, original optical flow tracker
 pedrec/training/train_pedrec.py PedRecNet training (stages: pedrec/training/experiments/pedrec_stages.py)
 pedrec/training/train_ehpi3d.py EHPI3D training (variants: pedrec/training/experiments/ehpi3d_variants.py)
 pedrec/evaluations/             validation / evaluation scripts
@@ -166,6 +217,7 @@ pedrec/tools/                   dataset generators, result writers, weight tools
 pedrec/networks/                PedRecNet, EHPI3D, YoloV4
 pedrec/datasets/, pedrec/configs/, pedrec/utils/, pedrec/tracking/, pedrec/ui/, pedrec/visualizers/
 doc/                            experiment protocols, evaluation results, architecture review
+tests/                          unit tests (mise run test)
 ```
 
 # Generate own training data

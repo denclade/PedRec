@@ -12,10 +12,13 @@ Run ``--list`` to see all stages and their dependencies. Dataset and checkpoint 
 import argparse
 import logging
 import os
+import random
 import sys
+from typing import Optional
 
 sys.path.append(".")
 
+import numpy as np
 import torch
 import torch.optim
 import torch.utils.data
@@ -33,7 +36,9 @@ from pedrec.training.experiments.experiment_initializer import initialize_weight
     initialize_pose_resnet
 from pedrec.training.experiments.experiment_log_helper import get_experiment_protocol, save_log
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.checkpoint_selection import BestEpochTracker
 from pedrec.training.experiments.experiment_train_helper import init_experiment, train_round, get_outputs_loss_mtl
+from pedrec.training.experiments.train_stepper import TrainingOptions, TrainStepper, steps_per_epoch
 from pedrec.training.experiments.pedrec_stages import PedRecTrainingStage, get_stage, get_stage_chain, \
     format_stage_table, POSE_RESNET_INIT, STAGES, DEFAULT_STAGE
 from pedrec.utils.torch_utils.mtl_lr_finder import MTLLRFinder
@@ -190,10 +195,51 @@ def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, feature_extractor_di
     ]
 
 
-def run_round(net, description: ExperimentDescription, params, max_lrs, epochs: int, frozen_layers, train_loader,
-              validation_sets, device, checkpoint_path: str):
+class StageState:
+    """
+    Everything needed to continue an interrupted stage training (``--resume``) plus the best epoch bookkeeping.
+    Written after every epoch to ``experiment_pedrec_<stage>_<cycle>_state.pth``.
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self.best = BestEpochTracker()
+        self.loaded: Optional[dict] = None
+
+    def load(self) -> bool:
+        if not os.path.isfile(self.path):
+            return False
+        # own file incl. optimizer / RNG states -> full pickle
+        self.loaded = torch.load(self.path, map_location="cpu", weights_only=False)
+        self.best.load_state_dict(self.loaded.get("best", {}))
+        return True
+
+    def save(self, round_idx: int, epoch: int, net, ema, round_description: ExperimentRoundDescription, stepper,
+             suggested_lr: float):
+        state = {
+            "round": round_idx, "epoch": epoch, "suggested_lr": suggested_lr,
+            "model": net.state_dict(), "ema": ema.state_dict() if ema is not None else None,
+            "optimizer": round_description.optimizer.state_dict(),
+            "scheduler": round_description.scheduler.state_dict(),
+            "stepper": stepper.state_dict(), "best": self.best.state_dict(),
+            "rng": {"torch": torch.get_rng_state(), "numpy": np.random.get_state(), "python": random.getstate(),
+                    "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None},
+        }
+        tmp = self.path + ".tmp"
+        torch.save(state, tmp)
+        os.replace(tmp, self.path)
+
+
+def _final_weights(net, ema):
+    return (ema.module if ema is not None else net).state_dict()
+
+
+def run_round(round_idx: int, net, description: ExperimentDescription, params, max_lrs, epochs: int, frozen_layers,
+              train_loader, validation_sets, device, checkpoint_path: str, options: TrainingOptions, ema,
+              stage_state: StageState, best_checkpoint_path: str):
     optimizer = torch.optim.AdamW(params, **OPTIMIZER_PARAMS)
-    scheduler = OneCycleLR(optimizer, max_lr=max_lrs, steps_per_epoch=len(train_loader), epochs=epochs)
+    scheduler = OneCycleLR(optimizer, max_lr=max_lrs, epochs=epochs,
+                           steps_per_epoch=steps_per_epoch(len(train_loader), options.accumulate))
     round_description = ExperimentRoundDescription(
         num_epochs=epochs,
         optimizer=optimizer,
@@ -203,19 +249,46 @@ def run_round(net, description: ExperimentDescription, params, max_lrs, epochs: 
         optimizer_parameters=OPTIMIZER_PARAMS
     )
     description.experiment_rounds.append(round_description)
-    round_description.validation_results = train_round(net, description, round_description, train_loader,
-                                                       validation_sets, get_outputs_loss_mtl, get_preds_mtl, device,
-                                                       log=True)
-    torch.save(net.state_dict(), checkpoint_path)
-    logger.info(f"Saved checkpoint {checkpoint_path}")
+
+    start_epoch, stepper_state = 0, None
+    resumed = stage_state.loaded
+    if resumed is not None and resumed["round"] == round_idx:
+        if resumed["scheduler"].get("total_steps") != scheduler.total_steps:
+            raise ValueError("The interrupted training used a different number of epochs / batches per epoch. "
+                             "Resume with the same --epochs-round-*, --batch-size and --accumulate.")
+        optimizer.load_state_dict(resumed["optimizer"])
+        scheduler.load_state_dict(resumed["scheduler"])
+        stepper_state = resumed.get("stepper")
+        start_epoch = resumed["epoch"] + 1
+        logger.info(f"Resuming round {round_idx + 1} at epoch {start_epoch + 1}/{epochs}")
+
+    def on_epoch_end(epoch, eval_net, results, stepper):
+        name = f"round {round_idx + 1} epoch {epoch + 1}"
+        if stage_state.best.update(results.validation_results, name):
+            torch.save(eval_net.state_dict(), best_checkpoint_path)
+            logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "
+                        f"{best_checkpoint_path}")
+        stage_state.save(round_idx, epoch, net, ema, round_description, stepper, description.suggested_lr)
+
+    round_description.validation_results = train_round(
+        net, description, round_description, train_loader, validation_sets, get_outputs_loss_mtl, get_preds_mtl,
+        device, log=True, options=options, ema=ema, start_epoch=start_epoch, on_epoch_end=on_epoch_end,
+        stepper_state=stepper_state)
+    torch.save(_final_weights(net, ema), checkpoint_path)
+    logger.info(f"Saved checkpoint {checkpoint_path}" + (" (EMA weights)" if ema is not None else ""))
 
 
 def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, net, device: torch.device,
                 cycle_num: int, epochs_round_1: int, epochs_round_2: int, lr: float = None,
-                force_lr_finder: bool = False, skip_round_1: bool = False):
+                force_lr_finder: bool = False, skip_round_1: bool = False, options: TrainingOptions = None,
+                resume: bool = False):
+    options = options or TrainingOptions()
     paths = description.experiment_paths
     os.makedirs(paths.output_dir, exist_ok=True)
-    if cycle_num > 0:
+    stage_state = StageState(os.path.join(paths.output_dir, f"{stage.experiment_name}_{cycle_num}_state.pth"))
+    if resume and not stage_state.load():
+        logger.warning(f"--resume: no state file {stage_state.path}, starting from scratch")
+    if stage_state.loaded is None and cycle_num > 0:
         net.load_state_dict(load_state_dict_file(paths.get_stage_checkpoint_path(stage.name, cycle_num - 1)))
 
     split_params = split_no_wd_params(description.net_layers)
@@ -224,39 +297,63 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
     train_loader = get_train_loader(description, IMAGENET_TRANSFORM)
     validation_sets = get_validation_sets(description, IMAGENET_TRANSFORM)
 
-    if lr is not None:
+    if stage_state.loaded is not None:
+        description.suggested_lr = stage_state.loaded["suggested_lr"]
+    elif lr is not None:
         description.suggested_lr = lr
     elif stage.fixed_lr is not None and not force_lr_finder:
         description.suggested_lr = stage.fixed_lr
     else:
         plot_path = os.path.join(paths.output_dir, f"{stage.experiment_name}_lr_range_test.png")
         description.suggested_lr = find_learning_rate(net, params, train_loader, device, plot_path)
-    logger.info(f"Used LR: {description.suggested_lr:.2e}")
+    logger.info(f"Used LR: {description.suggested_lr:.2e} | {options.describe()} | "
+                f"effective batch size {description.batch_size * options.accumulate}")
 
     # Append the MTL sigmas AFTER the LR range test.
     params.append({'params': net.loss_head.sigmas, 'weight_decay': 1e-2})
 
+    ema = TrainStepper.create_ema(net, options)
+    if stage_state.loaded is not None:
+        net.load_state_dict(stage_state.loaded["model"])
+        if ema is not None and stage_state.loaded.get("ema") is not None:
+            ema.load_state_dict(stage_state.loaded["ema"])
+        rng = stage_state.loaded["rng"]
+        torch.set_rng_state(rng["torch"])
+        np.random.set_state(rng["numpy"])
+        random.setstate(rng["python"])
+        if rng.get("cuda") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(rng["cuda"])
+    resume_round = stage_state.loaded["round"] if stage_state.loaded is not None else 0
+    best_checkpoint = os.path.join(paths.output_dir, f"{stage.experiment_name}_{cycle_num}_best.pth")
+
     # Round 1: frozen feature extractor, full lr on the heads
     round_1_checkpoint = paths.get_stage_checkpoint_path(stage.name, cycle_num, round_suffix="01")
-    if skip_round_1:
+    if skip_round_1 and stage_state.loaded is None:
         logger.info(f"Skipping round 1, loading {round_1_checkpoint}")
         net.load_state_dict(load_state_dict_file(round_1_checkpoint))
-    else:
-        run_round(net, description, params,
+        if ema is not None:
+            ema = TrainStepper.create_ema(net, options)
+    elif resume_round == 0:
+        run_round(0, net, description, params,
                   max_lrs=get_max_lrs(stage, description.suggested_lr),
                   epochs=epochs_round_1,
                   frozen_layers=[net.model.feature_extractor],
                   train_loader=train_loader, validation_sets=validation_sets, device=device,
-                  checkpoint_path=round_1_checkpoint)
+                  checkpoint_path=round_1_checkpoint, options=options, ema=ema, stage_state=stage_state,
+                  best_checkpoint_path=best_checkpoint)
+        stage_state.loaded = None
 
     # Round 2: everything trainable with reduced lr
-    run_round(net, description, params,
+    run_round(1, net, description, params,
               max_lrs=get_max_lrs(stage, description.suggested_lr, feature_extractor_divisor=20, head_divisor=10),
               epochs=epochs_round_2,
               frozen_layers=[],
               train_loader=train_loader, validation_sets=validation_sets, device=device,
-              checkpoint_path=paths.get_stage_checkpoint_path(stage.name, cycle_num))
+              checkpoint_path=paths.get_stage_checkpoint_path(stage.name, cycle_num), options=options, ema=ema,
+              stage_state=stage_state, best_checkpoint_path=best_checkpoint)
 
+    if stage_state.best.best_epoch is not None:
+        logger.info(f"Best epoch: {stage_state.best.best_epoch} -> {best_checkpoint}")
     protocol = get_experiment_protocol(description)
     save_log(protocol, paths.get_stage_protocol_path(stage.name))
     print(protocol)
@@ -285,6 +382,17 @@ def parse_args(argv=None):
                         help="Training cycle; cycle > 0 continues from the checkpoint of cycle - 1 (default: 0).")
     parser.add_argument("--skip-round-1", action="store_true",
                         help="Load the round 1 checkpoint (*_01.pth) instead of training round 1.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue an interrupted training from <output-dir>/experiment_pedrec_<stage>_<cycle>_state.pth.")
+    stability = parser.add_argument_group("numerics / stability")
+    stability.add_argument("--amp", choices=["auto", "bf16", "fp16", "off"], default="auto",
+                           help="Mixed precision (default auto: bf16 on GPUs that support it, e.g. RTX 30xx-50xx). "
+                                "'off' reproduces the original fp32 training.")
+    stability.add_argument("--grad-clip", type=float, default=10.0, help="Max gradient norm, 0 disables (default 10).")
+    stability.add_argument("--accumulate", type=int, default=1,
+                           help="Gradient accumulation steps, e.g. --batch-size 24 --accumulate 2 on 12 GB GPUs.")
+    stability.add_argument("--ema-decay", type=float, default=0.9998,
+                           help="EMA of the weights used for validation and the checkpoints, 0 disables.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU training.")
     parser.add_argument("--numexpr-threads", type=int, default=16)
     return parser.parse_args(argv)
@@ -317,7 +425,10 @@ def main(argv=None):
                 epochs_round_2=args.epochs_round_2,
                 lr=args.lr,
                 force_lr_finder=args.lr_finder,
-                skip_round_1=args.skip_round_1)
+                skip_round_1=args.skip_round_1,
+                options=TrainingOptions(amp=args.amp, grad_clip=args.grad_clip, accumulate=args.accumulate,
+                                        ema_decay=args.ema_decay),
+                resume=args.resume)
 
 
 if __name__ == '__main__':
