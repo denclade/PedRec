@@ -10,77 +10,52 @@ from pedrec.utils.skeleton_helper import get_joint_score
 
 def draw_skeleton(painter: QPainter, skeleton_orig: np.ndarray, min_joint_score: float = 0.3,
                   scale_factor: float = 1.0):
-    skeleton = skeleton_orig.copy()
+    """Limbs in the left / right colors of the skeleton, joints as small dots with a dark outline."""
+    skeleton = skeleton_orig[:, :3].copy()
     skeleton[:, :2] /= scale_factor
-    for idx, joint in enumerate(skeleton):
-        if get_joint_score(joint) > min_joint_score:  # check score
-            x_coord, y_coord = int(joint[0]), int(joint[1])
-            color = SKELETON_PEDREC_JOINT_COLORS[idx]
-            pen = QPen(QColor(color.r, color.g, color.b, 127), 10, Qt.SolidLine)
-            painter.setPen(pen)
-            painter.drawEllipse(x_coord, y_coord, 2, 2)
-    for idx, pair in enumerate(SKELETON_PEDREC):
-        joint_a = skeleton[pair[0]]
-        joint_b = skeleton[pair[1]]
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    for idx, (a, b) in enumerate(SKELETON_PEDREC):
+        joint_a, joint_b = skeleton[a], skeleton[b]
         if (get_joint_score(joint_a) + get_joint_score(joint_b)) / 2 > min_joint_score:
             color = SKELETON_PEDREC_LIMB_COLORS[idx]
-            pen = QPen(QColor(color.r, color.g, color.b, 255), 2, Qt.SolidLine)
-            painter.setPen(pen)
-            painter.drawLine(int(joint_a[0]), int(joint_a[1]), int(joint_b[0]), int(joint_b[1]))
+            painter.setPen(QPen(QColor(color.r, color.g, color.b, 230), 2.5, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap))
+            painter.drawLine(QPointF(joint_a[0], joint_a[1]), QPointF(joint_b[0], joint_b[1]))
+    painter.setPen(QPen(QColor(20, 22, 26, 200), 1))
+    for idx, joint in enumerate(skeleton):
+        if get_joint_score(joint) > min_joint_score:
+            color = SKELETON_PEDREC_JOINT_COLORS[idx]
+            painter.setBrush(QBrush(QColor(color.r, color.g, color.b, 255)))
+            painter.drawEllipse(QPointF(joint[0], joint[1]), 3, 3)
 
 
-def draw_arrow_head(painter, line_start, line_end, color, line_width: int = 0):
-    polygon = QPolygonF()
-    rotation = math.degrees(math.atan2(line_start[1] - line_end[1], line_end[0] - line_start[0])) + 90
-    points = ((line_end[0] + 5 * math.sin(math.radians(rotation)), line_end[1] + 5 * math.cos(math.radians(rotation))),
-              (line_end[0] + 5 * math.sin(math.radians(rotation - 120)), line_end[1] + 5 * math.cos(math.radians(rotation - 120))),
-              (line_end[0] + 5 * math.sin(math.radians(rotation + 120)), line_end[1] + 5 * math.cos(math.radians(rotation + 120))))
-    pen = QPen(QColor(*color), line_width, Qt.SolidLine)
-    brush = QBrush(QColor(*color))
-    painter.setPen(pen)
-    painter.setBrush(brush)
-    for point in points:
-        polygon.append(QPointF(point[0], point[1]))
-
-    painter.drawPolygon(polygon)
-
-def draw_arrow(painter, start, yaw, pitch, roll):
-    x1 = 25 * (math.cos(yaw) * math.cos(roll))
-    y1 = 25 * (math.cos(pitch) * math.sin(roll) + math.cos(roll) * math.sin(pitch) * math.sin(yaw))
-
-    x2 = 25 * (-math.cos(yaw) * math.sin(roll))
-    y2 = 25 * (math.cos(pitch) * math.cos(roll) - math.sin(pitch) * math.sin(yaw) * math.sin(roll))
-
-    x3 = 25 * (math.sin(yaw))
-    y3 = 25 * (-math.cos(yaw) * math.sin(pitch))
-
-    # start = (100, 100)
-    roll_end = (start[0] + int(x1), start[1] + int(y1))
-    pitch_end = (start[0] + int(x2), start[1] + int(y2))
-    yaw_end = (start[0] + int(x3), start[1] + int(y3))                     # set lineColor
-
-    draw_line(painter, start, yaw_end, (255, 0, 0, 125))
-    draw_arrow_head(painter, start, yaw_end, (255, 0, 0, 125))
-
-    draw_line(painter, start, pitch_end, (0, 255, 0, 125))
-    draw_arrow_head(painter, start, pitch_end, (255, 0, 0, 125))
-
-    draw_line(painter, start, roll_end, (0, 0, 255, 255), 4)
-    draw_arrow_head(painter, start, roll_end, (255, 0, 0, 125))
+def orientation_direction(phi: float):
+    """
+    Image direction of a ground plane orientation phi (radians): 0 = right, 90 deg = away from the camera (up),
+    270 deg = towards the camera (down); the ellipse is flattened as seen by a camera looking slightly down.
+    """
+    return math.cos(phi), -math.sin(phi) * 0.45
 
 
-def draw_line(painter, start, end, color, line_width: int = 2):
-    pen = QPen(QColor(*color), line_width, Qt.SolidLine)
-    painter.setPen(pen)
-    painter.drawLine(int(start[0]), int(start[1]), int(end[0]), int(end[1]))
-
-
-def draw_orientation(painter: QPainter, orientations: np.ndarray, nose_joint_2d: np.ndarray):
-    theta = orientations[0] - (0.5 * math.pi)  # -90 - 90°
-    phi = orientations[1]
-
-    roll = 0
-    pitch = 1 * math.pi - theta
-    yaw = phi
-    draw_arrow(painter, (nose_joint_2d[0], nose_joint_2d[1]), yaw, pitch, roll)
-
+def draw_orientation(painter: QPainter, orientation: np.ndarray, center: np.ndarray, color: QColor,
+                     radius: float = 18):
+    """Orientation (phi) as an arrow on a flattened ground ellipse around ``center`` (widget pixels)."""
+    phi = float(orientation[1])
+    cx, cy = float(center[0]), float(center[1])
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    ellipse_color = QColor(color)
+    ellipse_color.setAlpha(110)
+    painter.setPen(QPen(ellipse_color, 1.2))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(QPointF(cx, cy), radius, radius * 0.45)
+    dx, dy = orientation_direction(phi)
+    tip = QPointF(cx + dx * radius * 1.35, cy + dy * radius * 1.35)
+    painter.setPen(QPen(color, 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    painter.drawLine(QPointF(cx, cy), tip)
+    angle = math.atan2(tip.y() - cy, tip.x() - cx)
+    head = QPolygonF([tip,
+                      QPointF(tip.x() - 7 * math.cos(angle - 0.45), tip.y() - 7 * math.sin(angle - 0.45)),
+                      QPointF(tip.x() - 7 * math.cos(angle + 0.45), tip.y() - 7 * math.sin(angle + 0.45))])
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(color))
+    painter.drawPolygon(head)

@@ -8,18 +8,15 @@ from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_LIMB_COLORS,
     SKELETON_PEDREC_JOINTS
 
 
-def add_grid(view: gl.GLViewWidget, size: QtGui.QVector3D = QtGui.QVector3D(3, 3, 1)):
-    gx = gl.GLGridItem(size=size)
-    gx.rotate(90, 0, 1, 0)
-    gx.translate(-1.5, 0, 0)
-    view.addItem(gx)
-    gy = gl.GLGridItem(size=size)
-    gy.rotate(90, 1, 0, 0)
-    gy.translate(0, -1.5, 0)
-    view.addItem(gy)
-    gz = gl.GLGridItem(size=size)
-    gz.translate(0, 0, -1.5)
-    view.addItem(gz)
+def add_floor(view: gl.GLViewWidget, z: float = -1.0, size: float = 3.0):
+    """Ground grid below the hip centered skeleton (in m)."""
+    from pedrec.ui import theme
+    floor = gl.GLGridItem(size=QtGui.QVector3D(size, size, 1))
+    floor.setSpacing(0.25, 0.25, 1)
+    floor.setColor(QtGui.QColor(theme.PANEL_BORDER))
+    floor.translate(0, 0, z)
+    view.addItem(floor)
+    return floor
 
 
 def get_limb_positions(skeleton: np.array, min_score: float = 0.3) -> Tuple[np.ndarray, np.ndarray]:
