@@ -22,6 +22,7 @@ import torch.utils.data
 import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import OneCycleLR
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.experiment_round_description import ExperimentRoundDescription
@@ -215,7 +216,7 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
     paths = description.experiment_paths
     os.makedirs(paths.output_dir, exist_ok=True)
     if cycle_num > 0:
-        net.load_state_dict(torch.load(paths.get_stage_checkpoint_path(stage.name, cycle_num - 1)))
+        net.load_state_dict(load_state_dict_file(paths.get_stage_checkpoint_path(stage.name, cycle_num - 1)))
 
     split_params = split_no_wd_params(description.net_layers)
     params = [{'params': p, 'weight_decay': 0 if wd else 1e-2} for (wd, p) in split_params]
@@ -239,7 +240,7 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
     round_1_checkpoint = paths.get_stage_checkpoint_path(stage.name, cycle_num, round_suffix="01")
     if skip_round_1:
         logger.info(f"Skipping round 1, loading {round_1_checkpoint}")
-        net.load_state_dict(torch.load(round_1_checkpoint))
+        net.load_state_dict(load_state_dict_file(round_1_checkpoint))
     else:
         run_round(net, description, params,
                   max_lrs=get_max_lrs(stage, description.suggested_lr),

@@ -1,7 +1,7 @@
 # PedRec task runner / environment definition for mise (https://mise.jdx.dev)
 #
 #   mise install          # installs the pinned Python + uv
-#   mise run setup        # creates .venv and installs the requirements (CUDA 11.3 wheels)
+#   mise run setup        # creates .venv and installs the requirements (PyTorch with CUDA 13, RTX 50xx ready)
 #   mise run demo         # runs the Qt demo on the default demo video
 #   mise tasks            # lists all tasks
 #
@@ -12,7 +12,7 @@
 # (e.g. in a local, git-ignored mise.local.toml).
 
 [tools]
-python = "3.9"
+python = "3.14"
 uv = "latest"
 
 [env]
@@ -20,15 +20,38 @@ _.python.venv = { path = ".venv", create = true }
 PEDREC_DATA_DIR = "{{ config_root }}/data"
 PYTHONPATH = "{{ config_root }}"
 NUMEXPR_MAX_THREADS = "16"
+QT_API = "pyqt6"
 
 # ------------------------------------------------------------------------------------------------------- setup
 [tasks.setup]
-description = "Install the requirements into .venv (torch 1.10.1 CUDA 11.3 wheels)"
-run = "uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113"
+description = "Install the requirements into .venv (Linux: PyTorch wheels with CUDA 13.0, RTX 20xx-50xx, driver >= 580)"
+run = "uv pip install -r requirements-dev.txt"
+
+[tasks."setup:cu128"]
+description = "Install with PyTorch CUDA 12.8 wheels (driver >= 570, also needed on Windows for GPU support)"
+run = [
+    "uv pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cu128",
+    "uv pip install -r requirements-dev.txt",
+]
 
 [tasks."setup:cpu"]
-description = "Install the requirements into .venv with CPU-only torch wheels"
-run = "uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu"
+description = "Install with CPU-only PyTorch wheels"
+run = [
+    "uv pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cpu",
+    "uv pip install -r requirements-dev.txt",
+]
+
+[tasks."setup:onnx"]
+description = "Install the optional ONNX export / onnxruntime-gpu (CUDA, TensorRT) backend"
+run = "uv pip install -r requirements-onnx.txt"
+
+[tasks.test]
+description = "Run the unit tests (equivalence of the optimized inference, legacy data compatibility, tracking, ...)"
+run = "python -m pytest -q tests"
+
+[tasks."gpu:info"]
+description = "Show the PyTorch / CUDA setup and the detected GPU"
+run = "python -c \"import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0), 'arch list', torch.cuda.get_arch_list()) if torch.cuda.is_available() else None\""
 
 [tasks.check]
 description = "Byte-compile all sources and print the registered training stages / variants"
@@ -111,6 +134,22 @@ run = "python pedrec/demo.py --headless --no-tracking"
 [tasks."demo:no-action"]
 description = "Detector + PedRecNet + tracking without action recognition (GUI)"
 run = "python pedrec/demo.py --no-action"
+
+[tasks."demo:fast"]
+description = "Qt demo with fp16 autocast + channels_last (CUDA Tensor Cores); pass --video/--webcam/..."
+run = "python pedrec/demo.py --fast"
+
+[tasks."demo:onnx"]
+description = "Qt demo with the exported ONNX models on onnxruntime (TensorRT / CUDA); run export:onnx first"
+run = "python pedrec/demo.py --backend onnx"
+
+[tasks.bench]
+description = "Benchmark the pipeline per stage and compare with the original implementation; e.g. --fast, --video x.mp4"
+run = "python pedrec/tools/benchmark_pipeline.py"
+
+[tasks."export:onnx"]
+description = "Export YoloV4, PedRecNet and EHPI3D to $PEDREC_DATA_DIR/models/onnx and verify them against PyTorch"
+run = "python pedrec/tools/networks/export_onnx.py"
 
 # ------------------------------------------------------------------------------------------------------- training
 [tasks."train:list"]
@@ -216,6 +255,10 @@ run = "python pedrec/evaluations/sim_c01_eval_export.py"
 [tasks."tools:extract-net"]
 description = "Extract the plain network weights (*_net.pth, used by the demo) from a training checkpoint: --stage <stage>"
 run = "python pedrec/tools/networks/mtl_net_extractor.py"
+
+[tasks."tools:convert-dfs"]
+description = "Rewrite dataset / result dataframes (*.pkl from pandas 1.3) with the current pandas: mise run tools:convert-dfs <files>"
+run = "python pedrec/tools/datasets/convert_legacy_dfs.py"
 
 [tasks."tools:ehpi-videos"]
 description = "Run PedRecNet on the EHPI video dataset and write the skeleton dataframe used by the *_ehpi2dvids variants"

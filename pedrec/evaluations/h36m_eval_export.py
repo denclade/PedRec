@@ -18,6 +18,7 @@ from pedrec.utils.skeleton_helper_3d import flip_lr_joints_3d
 
 import numpy as np
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 
 h36m_actions = [
@@ -45,7 +46,7 @@ h36m_root = "data/datasets/Human3.6m"  # set by main()
 def get_df(dataset_root, result_filename):
     dataset_df_path = os.path.join(dataset_root, "results", result_filename)
     # TODO EVERY 64th
-    df = pd.read_pickle(dataset_df_path)
+    df = read_pedrec_df(dataset_df_path)
     # df = df.loc[range(0, len(df), 64)]
     return df
 

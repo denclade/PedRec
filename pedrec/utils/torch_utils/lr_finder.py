@@ -644,7 +644,7 @@ class StateCacher(object):
                 raise RuntimeError(
                     "Failed to load state in {}. File doesn't exist anymore.".format(fn)
                 )
-            state_dict = torch.load(fn, map_location=lambda storage, location: storage)
+            state_dict = torch.load(fn, map_location=lambda storage, location: storage, weights_only=False)
             return state_dict
 
     def __del__(self):

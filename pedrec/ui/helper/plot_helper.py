@@ -2,7 +2,7 @@ from typing import Tuple
 
 import numpy as np
 import pyqtgraph.opengl as gl
-from PyQt5 import QtGui
+from qtpy import QtGui
 
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_LIMB_COLORS, SKELETON_PEDREC, SKELETON_PEDREC_JOINT_COLORS, \
     SKELETON_PEDREC_JOINTS

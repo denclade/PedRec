@@ -23,6 +23,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.dataset_configs import PedRecTemporalDatasetConfig, VideoActionDatasetConfig
 from pedrec.datasets.dataset_helper import worker_init_fn
@@ -123,7 +124,7 @@ def train_variant(variant: Ehpi3DVariant, experiment_paths: ExperimentPaths, dev
     net = Ehpi3DNet(len(action_list))
     if init_weights is not None:
         logger.info(f"Initializing from {init_weights}")
-        net.load_state_dict(torch.load(init_weights))
+        net.load_state_dict(load_state_dict_file(init_weights))
     net.to(device)
 
     split_params = split_no_wd_params([net])

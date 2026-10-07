@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.dataset_configs import get_h36m_val_dataset_cfg_default
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.datasets.pedrec_dataset import PedRecDataset
@@ -104,7 +105,7 @@ def main(argv=None):
     net_cfg = PedRecNet50Config()
     net = PedRecNet(net_cfg)
     net.init_weights()
-    net.load_state_dict(torch.load(weights, map_location=device))
+    net.load_state_dict(load_state_dict_file(weights))
     net.to(device)
 
     # Load H36M validation set

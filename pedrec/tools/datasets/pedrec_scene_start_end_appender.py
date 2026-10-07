@@ -1,9 +1,10 @@
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 import numpy as np
 
 
 def run(df_path: str):
-    df = pd.read_pickle(df_path)
+    df = read_pedrec_df(df_path)
     last_folder = None
     last_uid = None
     start_idx = -1

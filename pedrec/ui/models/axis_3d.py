@@ -59,7 +59,7 @@ class Axis3D(gl.GLAxisItem):
 
     def paint(self):
         self.setupGLState()
-        if self.antialias:
+        if getattr(self, "antialias", True):
             ogl.glEnable(ogl.GL_LINE_SMOOTH)
             ogl.glHint(ogl.GL_LINE_SMOOTH_HINT, ogl.GL_NICEST)
             ogl.glEnable(ogl.GL_BLEND)

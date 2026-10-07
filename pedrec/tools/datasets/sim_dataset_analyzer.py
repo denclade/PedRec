@@ -382,7 +382,7 @@ def run(image_size: ImageSize, dataset_base_dir: str, dataset_dirs: List[str], n
                         characters[char_uid].num_frames += 1
 
     print(name)
-    print(f"Character & Gender & Age & Size & Weight & SkinColor & NumFrames \\ \midrule")
+    print(f"Character & Gender & Age & Size & Weight & SkinColor & NumFrames \\\\ \\midrule")
     for idx, character in enumerate(characters.values()):
         print(f"{idx} & {character.gender} & {character.age} & {character.size} & {character.weight} & {character.skinColor} & {character.num_frames} \\\\")
 

@@ -30,6 +30,7 @@ class YoloLayer(nn.Module):
         self.scale_x_y = 1
 
         self.model_out = model_out
+        self._decode_cache = {}
 
     def forward(self, output, target=None):
         if self.training:
@@ -45,113 +46,52 @@ class YoloLayer(nn.Module):
         return self.yolo_forward_alternative(output, self.thresh, self.num_classes, masked_anchors,
                                              len(self.anchor_mask))
 
+    def _get_decode_tensors(self, H: int, W: int, anchors, num_anchors: int, device, dtype):
+        """
+        Grid offsets, anchors and normalization factors for a feature map size; cached because they only depend on
+        the input resolution (previously rebuilt from numpy and copied to the device on every forward pass).
+        """
+        key = (H, W, tuple(anchors), num_anchors, str(device), dtype)
+        if key not in self._decode_cache:
+            # grid_x[h * W + w] = w, grid_y[h * W + w] = h
+            grid_x = torch.arange(W, device=device, dtype=dtype).repeat(H).view(1, 1, H * W)
+            grid_y = torch.arange(H, device=device, dtype=dtype).repeat_interleave(W).view(1, 1, H * W)
+            anchor_tensor = torch.tensor(anchors, device=device, dtype=dtype).view(1, num_anchors, 2, 1)
+            normal_tensor = torch.tensor([1.0 / W, 1.0 / H, 1.0 / W, 1.0 / H], device=device, dtype=dtype).view(1, 1, 4)
+            self._decode_cache[key] = (grid_x, grid_y, anchor_tensor, normal_tensor)
+        return self._decode_cache[key]
+
     def yolo_forward_alternative(self, output, conf_thresh, num_classes, anchors, num_anchors, only_objectness=1,
                                  validation=False):
-        # Output would be invalid if it does not satisfy this assert
-        # assert (output.size(1) == (5 + num_classes) * num_anchors)
-
-        # print(output.size())
-
         # Slice the second dimension (channel) of output into:
         # [ 2, 2, 1, num_classes, 2, 2, 1, num_classes, 2, 2, 1, num_classes ]
-        # And then into
-        # bxy = [ 6 ] bwh = [ 6 ] det_conf = [ 3 ] cls_conf = [ num_classes * 3 ]
         batch = output.size(0)
         H = output.size(2)
         W = output.size(3)
+        grid_x, grid_y, anchor_tensor, normal_tensor = self._get_decode_tensors(H, W, anchors, num_anchors,
+                                                                                output.device, output.dtype)
 
-        device = None
-        cuda_check = output.is_cuda
-        if cuda_check:
-            device = output.get_device()
-
-        # Prepare C-x, C-y, P-w, P-h (None of them are torch related)
-        grid_x = np.expand_dims(np.linspace(0, W - 1, W), axis=0).repeat(H, 0).reshape(1, 1, H * W).repeat(batch,
-                                                                                                           0).repeat(
-            num_anchors, 1)
-        grid_y = np.expand_dims(np.linspace(0, H - 1, H), axis=1).repeat(W, 1).reshape(1, 1, H * W).repeat(batch,
-                                                                                                           0).repeat(
-            num_anchors, 1)
-        # Shape: [batch, num_anchors, H * W]
-        grid_x_tensor = torch.tensor(grid_x, device=device, dtype=torch.float32)
-        grid_y_tensor = torch.tensor(grid_y, device=device, dtype=torch.float32)
-
-        anchor_array = np.array(anchors).reshape(1, num_anchors, 2)
-        anchor_array = anchor_array.repeat(batch, 0)
-        anchor_array = np.expand_dims(anchor_array, axis=3).repeat(H * W, 3)
+        output = output.view(batch, num_anchors, 5 + num_classes, H * W)
         # Shape: [batch, num_anchors, 2, H * W]
-        anchor_tensor = torch.tensor(anchor_array, device=device, dtype=torch.float32)
-
-        # normalize coordinates to [0, 1]
-        normal_array = np.array([1.0 / W, 1.0 / H, 1.0 / W, 1.0 / H], dtype=np.float32).reshape(1, 1, 4)
-        normal_array = normal_array.repeat(batch, 0)
-        normal_array = normal_array.repeat(num_anchors * H * W, 1)
-        # Shape: [batch, num_anchors * H * W, 4]
-        normal_tensor = torch.tensor(normal_array, device=device, dtype=torch.float32)
-
-        bxy_list = []
-        bwh_list = []
-        det_confs_list = []
-        cls_confs_list = []
-
-        for i in range(num_anchors):
-            begin = i * (5 + num_classes)
-            end = (i + 1) * (5 + num_classes)
-
-            bxy_list.append(output[:, begin: begin + 2])
-            bwh_list.append(output[:, begin + 2: begin + 4])
-            det_confs_list.append(output[:, begin + 4: begin + 5])
-            cls_confs_list.append(output[:, begin + 5: end])
-
-        # Shape: [batch, num_anchors * 2, H, W]
-        bxy = torch.cat(bxy_list, dim=1)
-        # Shape: [batch, num_anchors * 2, H, W]
-        bwh = torch.cat(bwh_list, dim=1)
-
-        # Shape: [batch, num_anchors, H, W]
-        det_confs = torch.cat(det_confs_list, dim=1)
-        # Shape: [batch, num_anchors * H * W]
-        det_confs = det_confs.view(batch, num_anchors * H * W)
-
-        # Shape: [batch, num_anchors * num_classes, H, W]
-        cls_confs = torch.cat(cls_confs_list, dim=1)
-        # Shape: [batch, num_anchors, num_classes, H * W]
-        cls_confs = cls_confs.view(batch, num_anchors, num_classes, H * W)
+        bxy = torch.sigmoid(output[:, :, 0:2])
+        bwh = torch.exp(output[:, :, 2:4])
+        # Shape: [batch, num_anchors * H * W, 1]
+        det_confs = torch.sigmoid(output[:, :, 4]).reshape(batch, num_anchors * H * W, 1)
         # Shape: [batch, num_anchors, num_classes, H * W] --> [batch, num_anchors * H * W, num_classes]
-        cls_confs = cls_confs.permute(0, 1, 3, 2).reshape(batch, num_anchors * H * W, num_classes)
-
-        # Apply sigmoid(), exp() and softmax() to slices
-        #
-        bxy = torch.sigmoid(bxy)
-        bwh = torch.exp(bwh)
-        det_confs = torch.sigmoid(det_confs)
-        cls_confs = torch.nn.Softmax(dim=2)(cls_confs)
-
-        # Shape: [batch, num_anchors, 2, H * W]
-        bxy = bxy.view(batch, num_anchors, 2, H * W)
-        # Shape: [batch, num_anchors, 2, H * W]
-        bwh = bwh.view(batch, num_anchors, 2, H * W)
+        cls_confs = output[:, :, 5:].permute(0, 1, 3, 2).reshape(batch, num_anchors * H * W, num_classes)
+        cls_confs = torch.softmax(cls_confs, dim=2)
 
         # Apply C-x, C-y, P-w, P-h
-        bxy[:, :, 0] += grid_x_tensor
-        bxy[:, :, 1] += grid_y_tensor
-
-        self.logger.debug(anchor_tensor.size())
-        bwh *= anchor_tensor
+        bxy = torch.stack((bxy[:, :, 0] + grid_x, bxy[:, :, 1] + grid_y), dim=2)
+        bwh = bwh * anchor_tensor
 
         # Shape: [batch, num_anchors, 4, H * W] --> [batch, num_anchors * H * W, 4]
         boxes = torch.cat((bxy, bwh), dim=2).permute(0, 1, 3, 2).reshape(batch, num_anchors * H * W, 4)
+        boxes = boxes * normal_tensor
 
-        self.logger.debug(normal_tensor.size())
-        boxes *= normal_tensor
-
-        det_confs = det_confs.view(batch, num_anchors * H * W, 1)
-        confs = cls_confs * det_confs
-
-        # boxes: [batch, num_anchors * H * W, 4]
+        # boxes: [batch, num_anchors * H * W, 4] (center x, center y, width, height; normalized to [0, 1])
         # confs: [batch, num_anchors * H * W, num_classes]
-
-        return boxes, confs
+        return boxes, cls_confs * det_confs
 
     def yolo_forward(self, output, conf_thresh, num_classes, anchors, num_anchors, scale_x_y, only_objectness=1,
                      validation=False):

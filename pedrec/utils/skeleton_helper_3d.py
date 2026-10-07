@@ -38,7 +38,8 @@ def get_unit_skeleton_sequence(skeleton_3d_sequence: np.ndarray, nan_value: floa
                               joints_b[:, 2] - joints_a[:, 2]], dtype=np.float32)
 
         direction = np.transpose(direction, (1, 0))
-        normalized_direction = direction / np.linalg.norm(direction, axis=1, keepdims=True)
+        with np.errstate(invalid="ignore", divide="ignore"):  # zero padded frames -> nan -> 0 below
+            normalized_direction = direction / np.linalg.norm(direction, axis=1, keepdims=True)
         # normalized_direction = np.transpose(normalized_direction, (1, 0))
         joints[:, limb[1], :3] = joints[:, limb[0], :3] + normalized_direction * limb_length
     # joints[:, :, 3] = 1

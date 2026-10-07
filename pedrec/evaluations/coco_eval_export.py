@@ -16,6 +16,7 @@ from pedrec.utils.skeleton_helper import flip_lr_joints
 
 import numpy as np
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 import json
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -28,7 +29,7 @@ dataset_root = "data/datasets/COCO"  # set by main()
 
 def get_skeleton2d(result_filename):
     dataset_df_path = os.path.join(dataset_root, "results", result_filename)
-    df = pd.read_pickle(dataset_df_path)
+    df = read_pedrec_df(dataset_df_path)
 
     filter_skeleton2d = [col for col in df if col.startswith("skeleton2d")]
     img_widths = df["img_size_w"]

@@ -14,6 +14,7 @@ import os
 
 import torch
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
 from pedrec.networks.net_pedrec.pedrec_net_mtl_wrapper import PedRecNetMTLWrapper
@@ -22,7 +23,7 @@ from pedrec.utils.torch_utils.torch_helper import get_device
 
 
 def mtl_to_net(mtl_wrapper: torch.nn.Module, mtl_path: str, output_path: str):
-    mtl_wrapper.load_state_dict(torch.load(mtl_path, map_location="cpu"))
+    mtl_wrapper.load_state_dict(load_state_dict_file(mtl_path))
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     torch.save(mtl_wrapper.model.state_dict(), output_path)
     print(f"Wrote {output_path}")

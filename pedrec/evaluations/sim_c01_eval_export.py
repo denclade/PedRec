@@ -21,6 +21,7 @@ from pedrec.utils.skeleton_helper_3d import flip_lr_joints_3d, flip_lr_orientati
 
 import numpy as np
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 
 
@@ -30,7 +31,7 @@ sim_c01_val_filename = "rt_conti_01_val_FIN.pkl"
 
 def get_df(dataset_root, result_filename):
     dataset_df_path = os.path.join(dataset_root, "results", result_filename)
-    return pd.read_pickle(dataset_df_path)
+    return read_pedrec_df(dataset_df_path)
 
 
 def get_skeleton2d(df):
@@ -67,13 +68,14 @@ def get_msjpe(output, target):
 
 
 def get_results(experiment_name: str, flip_test: bool = False, skeleton: SKELETON = SKELETON.PEDREC):
-    df_full_gt = pd.read_pickle(os.path.join(sim_c01_root, sim_c01_val_filename))
+    df_full_gt = read_pedrec_df(os.path.join(sim_c01_root, sim_c01_val_filename))
     skeleton2d_visibles = [col for col in df_full_gt if col.startswith('skeleton2d') and col.endswith('_visible')]
     df_full_gt["visible_joints"] = df_full_gt[skeleton2d_visibles].sum(axis=1)
     df_valid_filter = (df_full_gt['bb_score'] >= 1) & (df_full_gt['visible_joints'] >= 3)
     df_full_gt = df_full_gt[df_valid_filter]
     df_gt = get_df(sim_c01_root, f"C01F_gt_df_{experiment_name}.pkl")
     df = get_df(sim_c01_root, f"C01F_pred_df_{experiment_name}.pkl")
+    df_flipped = get_df(sim_c01_root, f"C01F_pred_df_{experiment_name}_flipped.pkl") if flip_test else None
     # df_flipped = get_df("data/datasets/Conti01", f"C01_pred_df_{experiment_name}_flipped.pkl")
 
     _, skeleton_3d_full_gt = get_skeleton3d(df_full_gt)

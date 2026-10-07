@@ -16,6 +16,7 @@ import argparse
 import torch
 import torchvision.transforms as transforms
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs import default_paths
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.evaluations.validate import print_results
@@ -39,7 +40,7 @@ def get_preds_mtl(outputs):
 
 def load_net(weights_path: str, device: torch.device) -> PedRecNetMTLWrapper:
     net = PedRecNetMTLWrapper(PedRecNet(PedRecNet50Config()), PedRecNetLossHead(device))
-    state_dict = torch.load(weights_path, map_location=device)
+    state_dict = load_state_dict_file(weights_path)
     if any(key.startswith("loss_head.") for key in state_dict.keys()):
         net.load_state_dict(state_dict)
     else:  # exported network weights without the MTL wrapper

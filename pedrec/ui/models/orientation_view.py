@@ -1,7 +1,7 @@
 import math
 
 import pyqtgraph.opengl as gl
-from pyqtgraph.Qt import QtGui
+from qtpy import QtGui
 
 from pedrec.models.data_structures import Color
 from pedrec.ui.helper.plot_helper import add_grid

@@ -1,10 +1,10 @@
 from typing import List
 
 import numpy as np
-from PyQt5 import QtGui, QtSvg
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QLabel, QWidget
-from pyqtgraph.Qt import QtCore
+from qtpy import QtGui, QtSvg
+from qtpy.QtCore import Qt, Signal
+from qtpy.QtWidgets import QLabel, QWidget
+from qtpy import QtCore
 
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS, SKELETON_PEDREC_JOINT
 from pedrec.models.data_structures import ImageSize
@@ -16,12 +16,13 @@ from pedrec.utils.bb_helper import get_img_coordinates_from_bb, get_human_bb_fro
 
 
 class ImageWidget(QLabel):
-    human_selected = pyqtSignal(int)
+    human_selected = Signal(int)
 
-    def __init__(self, img_size: ImageSize, parent: QWidget = None, text: str = None):
+    def __init__(self, parent: QWidget = None, img_size: ImageSize = None, text: str = None):
         super().__init__(parent)
-        self.img_size = img_size
-        self.setText(text)
+        self.img_size = img_size  # set by PedRecApp.init_img_view
+        if text is not None:
+            self.setText(text)
         self.setScaledContents(True)
         self.setMinimumSize(320, 180)
         self.setMaximumSize(1920, 1080)
@@ -45,12 +46,13 @@ class ImageWidget(QLabel):
         # self.object_bbs[:, :2] /= self.scale_factor
 
     def paintEvent(self, event):
-        if self.pixmap() is None:
+        pixmap = self.pixmap()
+        if pixmap is None or pixmap.isNull():
             return
         with QtGui.QPainter(self) as painter:
             label_size = self.size()
             start_point = QtCore.QPoint(0, 0)
-            scaled_pixmap = self.pixmap().scaled(label_size, Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
+            scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, transformMode=Qt.SmoothTransformation)
             self.scale_factor = self.img_size.width / scaled_pixmap.size().width()
             painter.drawPixmap(start_point, scaled_pixmap)
 
@@ -83,7 +85,7 @@ class ImageWidget(QLabel):
                     draw_bb(painter, object_bb, img_size=self.img_size, cfg=self.cfg, scale_factor=self.scale_factor)
 
     def mousePressEvent(self, event):
-        click_pos = event.pos()
+        click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
         click_x = click_pos.x()
         click_y = click_pos.y()
         selected_human_uid = -1

@@ -1,5 +1,5 @@
 import numpy as np
-from PyQt5.QtWidgets import QApplication
+from qtpy.QtWidgets import QApplication
 
 from pedrec.inference.pipeline import PedRecPipeline
 from pedrec.ui.pedrec_worker import PedRecWorker

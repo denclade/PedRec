@@ -14,6 +14,7 @@ from torch.nn import BCEWithLogitsLoss
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.app_config import AppConfig, action_list_c01
 from pedrec.configs.dataset_configs import get_sim_dataset_cfg_default, PedRecTemporalDatasetConfig
 from pedrec.datasets.dataset_helper import worker_init_fn
@@ -38,7 +39,7 @@ from pedrec.utils.torch_utils.torch_helper import get_device, move_to_device
 
 
 def initialize_from_imgnet(net, pose_resnet_weights_path: str):
-    pose_resnet_state_dict = torch.load(pose_resnet_weights_path)
+    pose_resnet_state_dict = load_state_dict_file(pose_resnet_weights_path)
     net_weights = net.state_dict()
     for name, param in pose_resnet_state_dict.items():
         net_name = f"feature_extractor.{name}"
@@ -74,7 +75,7 @@ def main(net_weights_path, dataset_cfg: PedRecTemporalDatasetConfig, experiment_
     init_experiment(42)
     device = get_device(use_gpu=use_gpu)
     net = Ehpi3DNet(len(app_cfg.inference.action_list))
-    net.load_state_dict(torch.load(net_weights_path, map_location=device))
+    net.load_state_dict(load_state_dict_file(net_weights_path))
     net.to(device)
 
     val_loader = get_val_loader(experiment_paths, 48, app_cfg.inference.action_list, dataset_cfg, num_workers)

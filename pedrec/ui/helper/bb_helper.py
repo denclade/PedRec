@@ -1,10 +1,11 @@
 import math
+import os
 from typing import List
 
 import numpy as np
-from PyQt5 import QtSvg
-from PyQt5.QtCore import Qt, QPoint, QRect, QRectF
-from PyQt5.QtGui import QPen, QPainter, QColor, QFont, QBrush
+from qtpy import QtSvg
+from qtpy.QtCore import Qt, QPoint, QPointF, QRect, QRectF
+from qtpy.QtGui import QPen, QPainter, QColor, QFont, QBrush
 
 from pedrec.models.constants.action_mappings import ACTION
 from pedrec.models.constants.class_mappings import COCO_CLASSES
@@ -12,6 +13,8 @@ from pedrec.models.constants.color_palettes import DETECTION_COLOR_PALETTE
 from pedrec.models.data_structures import ImageSize
 from pedrec.ui.models.pedrec_ui_config import PedRecUIConfig
 from pedrec.utils.bb_helper import get_img_coordinates_from_bb, get_bb_class_idx
+
+UI_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def draw_bb(painter: QPainter,
@@ -25,13 +28,12 @@ def draw_bb(painter: QPainter,
             alpha: int = 255,
             action_list: List[ACTION] = None):
     bb_tl_x, bb_tl_y, bb_br_x, bb_br_y = get_img_coordinates_from_bb(bb)
-    bb_tl_x /= scale_factor
-    bb_tl_y = bb_tl_y - 40
-    if bb_tl_y <= 0:
-        bb_tl_y = 0
-    bb_tl_y /= scale_factor
-    bb_br_x /= scale_factor
-    bb_br_y /= scale_factor
+    bb_tl_y = max(bb_tl_y - 40, 0)
+    # Qt only accepts integer pixel coordinates for QPoint / QRect
+    bb_tl_x = int(bb_tl_x / scale_factor)
+    bb_tl_y = int(bb_tl_y / scale_factor)
+    bb_br_x = int(bb_br_x / scale_factor)
+    bb_br_y = int(bb_br_y / scale_factor)
     # cls_conf = get_bb_score(bb)
 
     if cfg.show_human_bb:
@@ -73,14 +75,10 @@ def draw_bb(painter: QPainter,
 
 
 def draw_eye_symbol(painter: QPainter, bb_tl_x: float, bb_tl_y: float, img_size: ImageSize):
-    point_tl_x = max(bb_tl_x-10, 0)
-    point_tl_y = max(bb_tl_y-10, 0)
-    point_tl = QPoint(point_tl_x, point_tl_y)
-    point_br_x = min(bb_tl_x+10, img_size.width)
-    point_br_y = min(bb_tl_y+10, img_size.height)
-    point_br = QPoint(point_br_x, point_br_y)
+    point_tl = QPointF(max(bb_tl_x - 10, 0), max(bb_tl_y - 10, 0))
+    point_br = QPointF(min(bb_tl_x + 10, img_size.width), min(bb_tl_y + 10, img_size.height))
     rect = QRectF(point_tl, point_br)
-    renderer = QtSvg.QSvgRenderer('pedrec/ui/eye.svg')
+    renderer = QtSvg.QSvgRenderer(os.path.join(UI_DIR, 'eye.svg'))
     renderer.render(painter, rect)
 
 icon_actions = [ACTION.WALK, ACTION.JOG, ACTION.STAND, ACTION.SIT]
@@ -93,28 +91,24 @@ def draw_actions(painter: QPainter,
                  bb_br_y: float,
                  img_size: ImageSize,
                  action_list: List[ACTION]):
-    point_tl_x = max(bb_br_x, 0)
-    point_tl_y = max(bb_br_y-25, 0)
-    point_tl = QPoint(point_tl_x, point_tl_y)
-    point_br_x = min(bb_br_x+15, img_size.width)
-    point_br_y = min(bb_br_y, img_size.height)
-    point_br = QPoint(point_br_x, point_br_y)
+    point_tl = QPointF(max(bb_br_x, 0), max(bb_br_y - 25, 0))
+    point_br = QPointF(min(bb_br_x + 15, img_size.width), min(bb_br_y, img_size.height))
     rect = QRectF(point_tl, point_br)
     if ACTION.WALK in action_list:
-        renderer = QtSvg.QSvgRenderer('pedrec/ui/action_walk.svg')
+        renderer = QtSvg.QSvgRenderer(os.path.join(UI_DIR, 'action_walk.svg'))
         renderer.render(painter, rect)
     elif ACTION.JOG in action_list:
-        renderer = QtSvg.QSvgRenderer('pedrec/ui/action_jog.svg')
+        renderer = QtSvg.QSvgRenderer(os.path.join(UI_DIR, 'action_jog.svg'))
         renderer.render(painter, rect)
     elif ACTION.STAND in action_list:
-        renderer = QtSvg.QSvgRenderer('pedrec/ui/action_stand.svg')
+        renderer = QtSvg.QSvgRenderer(os.path.join(UI_DIR, 'action_stand.svg'))
         renderer.render(painter, rect)
     elif ACTION.SIT in action_list:
-        renderer = QtSvg.QSvgRenderer('pedrec/ui/action_sit.svg')
+        renderer = QtSvg.QSvgRenderer(os.path.join(UI_DIR, 'action_sit.svg'))
         renderer.render(painter, rect)
 
-    point_a = QPoint(bb_br_x, bb_tl_y)
-    point_b = QPoint(bb_br_x + 150, bb_tl_y + 10)
+    point_a = QPoint(int(bb_br_x), int(bb_tl_y))
+    point_b = QPoint(int(bb_br_x) + 150, int(bb_tl_y) + 10)
     for action in action_list:
         if action in icon_actions:
             continue

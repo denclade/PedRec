@@ -75,8 +75,9 @@ def get_orientation_plot(theta_rad: float, phi_rad: float):
     ax.plot_wireframe(X, Y, Z, linewidth=0.5, rstride=3, cstride=3)
 
     canvas.draw()
-    width, height = fig.get_size_inches() * fig.get_dpi()
-    return np.fromstring(canvas.tostring_rgb(), dtype='uint8').reshape(int(height), int(width), 3)
+    img = np.asarray(canvas.buffer_rgba())[:, :, :3].copy()
+    plt.close(fig)
+    return img
 
 
 def draw_orientation(img: np.ndarray, human: Human):
