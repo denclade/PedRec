@@ -5,7 +5,7 @@ Stand: Oktober 2026. Ursprünglich reines Review; den Umsetzungsstand zeigt der 
 `pedrec/utils/ehpi_helper.py` und die Trainingsprozedur in `pedrec/training`. Referenzpunkt sind die in 2024 bis 2026
 etablierten Standards für 2D/3D-Pose, Orientierung, skelettbasierte Aktionserkennung, Detektion und Tracking.
 
-## Umsetzungsstand (Branch `claude/pedrec-v2-architecture`)
+## Umsetzungsstand (Branch `v2`)
 
 Dieser Branch enthält genau eine Konfiguration (keine Varianten oder Schalter für alte Komponenten). Die Punkte 1, 3
 und 5 stammen aus dem Hauptzweig, die übrigen brauchen ein neues Training.
@@ -17,15 +17,19 @@ und 5 stammen aus dem Hauptzweig, die übrigen brauchen ein neues Training.
 | 3 | Best-Checkpoint, EMA, AMP, Gradient-Clipping, Resume, NaN-Schutz | umgesetzt; dazu Kendall-Gewichtung mit begrenzten log-Varianzen, Half-Body-, Farb- und Erasing-Augmentation, Datensatz-Balancing |
 | 4 | `torch.compile`, `channels_last`, fp16, GPU-Preprocessing | umgesetzt; ONNX entfernt, weil der RT-DETR-Export mit aktuellem torch / transformers nicht verlustfrei funktioniert |
 | 5 | ByteTrack, One-Euro-Filter | umgesetzt, einziger Tracker |
-| 6 | Detektor RT-DETRv2 (`PekingU/rtdetr_v2_r18vd`, NMS-frei) | umgesetzt, YoloV4 entfernt |
+| 6 | Detektor RT-DETRv2 (`PekingU/rtdetr_v2_r18vd`, NMS-frei) | umgesetzt, YoloV4 entfernt; seitenverhältnistreue Eingabe (640 x 352 bei 16:9, ~28 statt 33.8 GMACs von YoloV4) |
 | 7 | Konfidenz aus Heatmap-Statistik | umgesetzt (`pedrec_pose_conf_head_heatmap.py`) |
-| 8 | UDP-Datenverarbeitung | umgesetzt (einzige Konvention); Backbone bleibt ResNet-50, damit das Training von der veröffentlichten v1-Kette starten kann |
-| 9 | ST-GCN statt ResNet-50 auf dem EHPI-Bild | umgesetzt (`ehpi_stgcn.py`, ca. 2 Mio. Parameter, gleiche EHPI-Daten) |
-| 10 | Lifting über die Zeit / SMPL | bewusst nicht umgesetzt (zusätzliches Modell, widerspricht dem Ziel einer schlanken Pipeline) |
+| 8 | Backbone und UDP | HGNetV2-B3 (ImageNet SSLD) + FPN-Neck statt ResNet-50 + Deconvs: 2.45 statt 6.28 GMACs pro Crop, gleiche 64 x 48 Heatmaps; UDP als einzige Konvention; Trainingskette auf zwei Stages ab ImageNet verkürzt |
+| 9 | ST-GCN statt ResNet-50 auf dem EHPI-Bild | umgesetzt (`ehpi_stgcn.py`, 0.2 Mio. Parameter, 116 statt 167 MMACs pro Sequenz, gleiche EHPI-Daten) |
+| 10 | Lifting über die Zeit | umgesetzt: kausaler zeitlicher Lifter pro Track (`pose_lifter.py`, 27 Frames, 0.7 Mio. Parameter, ~1 ms für alle Tracks); SMPL bewusst nicht (eigenes Modell, kein Mehrwert für die Pipeline) |
 
 Die Trainingsdaten (Dataframes, Bilder, Annotationen) werden unverändert verwendet. Die v2-Gewichte müssen trainiert
-werden (`mise run download:checkpoints`, dann `mise run train:pedrec`, `mise run tools:extract-net --stage
-p2d3d_c_o_h36m_sim_mebow` und `mise run train:ehpi3d`); die veröffentlichten v1-Gewichte passen nicht mehr zur Demo.
+werden (`mise run download:models`, dann `mise run train:all`); die veröffentlichten v1-Gewichte passen nicht zu v2.
+
+Laufzeit (CPU, 4 Threads, Zufallsgewichte, 1920 x 1080, 6 Personen, Median pro Frame): v1 1129 ms, v2 648 ms
+(Detektion 509 -> 362, PedRecNet 544 -> 249, Aktionen 51 -> 30, Lifting 5 ms). GPU-Zahlen fehlen noch
+(`mise run bench --fast` auf beiden Branches). Die Genauigkeit von v2 ist erst nach dem Training messbar; die
+Lifter-Validierung meldet direkt, ob die gelifteten 3D-Posen besser sind als die Einzelbild-Posen.
 
 ## 1. Zusammenfassung
 

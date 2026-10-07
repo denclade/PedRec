@@ -10,6 +10,7 @@ from pedrec.inference.pipeline import PedRecPipeline, PipelineConfig
 from pedrec.models.data_structures import ImageSize
 from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
+from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter
 
 IMG_SIZE = ImageSize(320, 240)
 
@@ -18,9 +19,10 @@ IMG_SIZE = ImageSize(320, 240)
 def weights(tmp_path_factory):
     root = tmp_path_factory.mktemp("weights")
     torch.manual_seed(0)
-    paths = {"pedrec": root / "pedrec.pth", "action": root / "action.pth"}
+    paths = {"pedrec": root / "pedrec.pth", "action": root / "action.pth", "lifter": root / "lifter.pth"}
     torch.save(PedRecNet(PedRecNetConfig()).state_dict(), paths["pedrec"])
     torch.save(EhpiStGcn(len(AppConfig().inference.action_list)).state_dict(), paths["action"])
+    torch.save(TemporalPoseLifter(PedRecNetConfig().model.num_joints).state_dict(), paths["lifter"])
     return {k: str(v) for k, v in paths.items()}
 
 
@@ -50,7 +52,8 @@ class FakeDetector:
 
 
 def test_full_pipeline_single_pose_pass(weights):
-    cfg = PipelineConfig(human_min_score=0.0, pedrec_weights=weights["pedrec"], ehpi3d_weights=weights["action"])
+    cfg = PipelineConfig(human_min_score=0.0, pedrec_weights=weights["pedrec"], ehpi3d_weights=weights["action"],
+                         lifter_weights=weights["lifter"])
     detector = FakeDetector()
     pipeline = PedRecPipeline(cfg, _app_cfg(), torch.device("cpu"), detector=detector)
     calls = []
@@ -70,11 +73,12 @@ def test_full_pipeline_single_pose_pass(weights):
     assert calls == [1, 1, 1, 1]  # exactly one PedRecNet batch per frame
     assert detector.calls == 4
     assert len(result.humans) == 1 and len(uids) == 1  # one track over all frames
-    assert set(result.timings) >= {"upload", "detection", "pose", "tracking", "action", "total"}
+    assert set(result.timings) >= {"upload", "detection", "pose", "tracking", "lifting", "action", "total"}
 
 
 def test_pose_only_on_full_frame(weights):
-    cfg = PipelineConfig(use_detector=False, use_tracking=False, use_action=False, human_min_score=0.0,
+    cfg = PipelineConfig(use_detector=False, use_tracking=False, use_lifter=False, use_action=False,
+                         human_min_score=0.0,
                          pedrec_weights=weights["pedrec"])
     pipeline = PedRecPipeline(cfg, _app_cfg(), torch.device("cpu"))
     result = pipeline.process(1, next(_frames()))
@@ -88,7 +92,7 @@ def test_detector_only_with_rtdetr():
     torch.manual_seed(0)
     model = transformers.RTDetrV2ForObjectDetection(transformers.RTDetrV2Config(num_labels=80))
     detector = RTDetrDetector(torch.device("cpu"), "unused", model=model)
-    cfg = PipelineConfig(use_pose=False, use_tracking=False, use_action=False)
+    cfg = PipelineConfig(use_pose=False, use_tracking=False, use_lifter=False, use_action=False)
     pipeline = PedRecPipeline(cfg, _app_cfg(), torch.device("cpu"), detector=detector)
     result = pipeline.process(1, next(_frames()))
     assert set(result.timings) >= {"upload", "detection", "total"}
@@ -97,3 +101,5 @@ def test_detector_only_with_rtdetr():
 def test_invalid_stage_combination():
     with pytest.raises(ValueError):
         PipelineConfig(use_pose=False, use_tracking=True, use_action=False).validate()
+    with pytest.raises(ValueError):
+        PipelineConfig(use_tracking=False, use_lifter=True, use_action=False).validate()

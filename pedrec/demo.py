@@ -112,9 +112,11 @@ def get_pipeline_config(args) -> PipelineConfig:
         use_detector=not args.no_detector,
         use_pose=not args.no_pose,
         use_tracking=not args.no_tracking,
+        use_lifter=not args.no_lifter,
         use_action=not args.no_action,
         pedrec_weights=args.pedrec_weights,
         ehpi3d_weights=args.ehpi3d_weights,
+        lifter_weights=args.lifter_weights,
         data_root=args.data_dir,
         detector_conf_thresh=args.detector_conf_thresh,
         human_min_score=args.human_min_score,
@@ -250,6 +252,8 @@ def parse_args(argv=None):
                             help="Skip the detector, use the full frame as the human bounding box.")
     components.add_argument("--no-pose", action="store_true", help="Skip PedRecNet (detector only).")
     components.add_argument("--no-tracking", action="store_true", help="Skip tracking / id assignment / smoothing.")
+    components.add_argument("--no-lifter", action="store_true",
+                            help="Skip the temporal 3D lifting (per frame 3D poses of PedRecNet).")
     components.add_argument("--no-action", action="store_true", help="Skip the action recognition.")
     components.add_argument("--action-list", choices=["c01", "c01_real"], default="c01_real",
                             help="Action classes of the action recognition weights (default: c01_real, 20 classes).")
@@ -269,6 +273,7 @@ def parse_args(argv=None):
     weights.add_argument("--pedrec-weights", default=None,
                          help=f"Default: <data-dir>/{default_paths.PEDREC_NET_WEIGHTS}")
     weights.add_argument("--ehpi3d-weights", default=None, help=f"Default: <data-dir>/{default_paths.EHPI3D_WEIGHTS}")
+    weights.add_argument("--lifter-weights", default=None, help=f"Default: <data-dir>/{default_paths.LIFTER_WEIGHTS}")
 
     thresholds = parser.add_argument_group("thresholds")
     thresholds.add_argument("--detector-conf-thresh", type=float, default=0.4)
@@ -290,6 +295,7 @@ def parse_args(argv=None):
         args.no_tracking = True
         args.no_action = True
     if args.no_tracking:
+        args.no_lifter = True
         args.no_action = True
     if args.fast:
         args.half = True

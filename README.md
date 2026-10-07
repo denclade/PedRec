@@ -16,30 +16,40 @@ Note: This work is currently unpublished. It is part of my PhD dissertation and 
 
 [![PedRecNet Demo 02: Multiple Pedestrians](https://img.youtube.com/vi/xUcTKKGHfEs/0.jpg)](https://www.youtube.com/watch?v=xUcTKKGHfEs)
 
-# Branch `pedrec-v2-architecture`
-This branch contains the reworked network and pipeline (one configuration, no switches for the old components):
+# PedRec v2 (branch `v2`)
+`v2` is the reworked network and pipeline (one configuration, no switches for the old components). `main` keeps the
+published v1.
 
-| Part | v1 (published) | v2 (this branch) |
+| Part | v1 (`main`) | v2 |
 | --- | --- | --- |
-| Detector | YoloV4 + NMS | RT-DETRv2 R18 (transformers, NMS free) |
-| PedRecNet orientation | regression of theta / phi | biternion (cos, sin) with cosine loss |
-| PedRecNet joint confidence | FC head | heatmap statistics (peak, entropy, spread) + BCE with logits |
+| Detector | YoloV4 608 x 320 + NMS (33.8 GMACs) | RT-DETRv2 R18, NMS free, aspect preserving 640 x 352 for 16:9 (~28 GMACs) |
+| PedRecNet backbone | ResNet-50 + three deconvolutions (6.28 GMACs / crop) | HGNetV2-B3 + FPN style neck (2.45 GMACs / crop), same 64 x 48 heatmaps |
+| Orientation | regression of theta / phi | biternion (cos, sin) with cosine loss |
+| Joint confidence | FC head | heatmap statistics (peak, entropy, spread) + BCE with logits |
 | Coordinates | original affine transform | UDP (unbiased data processing) |
 | Multi task loss | learned sigmas | Kendall log variances, clamped |
 | Training augmentation | flip, scale, rotation | + half body, color jitter, random erasing; optional dataset balancing |
-| Tracking | optical flow + pose merging | ByteTrack + One Euro filter |
-| Action recognition | ResNet-50 on the EHPI image | ST-GCN (~2M parameters) on the same EHPI input |
+| 3D pose over time | 2 frame mean | causal temporal lifter per track (27 frames, 0.7M parameters) |
+| Tracking | optical flow + pose merging | ByteTrack + One Euro filter (orientations) |
+| Action recognition | ResNet-50 on the EHPI image (167 MMACs) | ST-GCN on the same EHPI input (116 MMACs, 0.2M parameters) |
 
-The datasets and dataframes are used unchanged. The published v1 weights do not fit the v2 heads, so the demo needs
-v2 weights trained with this code. Backbone, decoder and pose heads are unchanged, so training starts from the
-published v1 checkpoints:
+Pipeline timings on the CPU (4 threads, random weights, 1920 x 1080, 6 persons, median ms per frame, `mise run bench
+--random-weights --cpu`; on the GPU run `mise run bench --fast` on both branches):
+
+| Stage | v1 | v2 |
+| --- | --- | --- |
+| detection | 509 | 362 |
+| pose (6 persons) | 544 | 249 |
+| 3D lifting | - | 5 |
+| action recognition | 51 | 30 |
+| total | 1129 | 648 |
+
+The data formats are the same (dataframes, heatmaps, EHPI images), so all datasets are used unchanged. The v1 weights
+do not fit v2; v2 is trained with this code (backbone from ImageNet):
 
 ```bash
-mise run download:models                               # RT-DETR (Hugging Face cache) + pose-resnet weights
-mise run download:checkpoints p2d3d_c_o_h36m_sim       # v1 predecessor of the final stage
-mise run train:pedrec                                  # p2d3d_c_o_h36m_sim_mebow, initialized from v1
-mise run tools:extract-net --stage p2d3d_c_o_h36m_sim_mebow
-mise run train:ehpi3d:data && mise run train:ehpi3d    # action recognition (ST-GCN) on the new PedRecNet results
+mise run download:models   # RT-DETR detector + ImageNet weights of the backbone (Hugging Face cache)
+mise run train:all         # PedRecNet stages -> demo weights -> 3D lifter -> action recognition
 ```
 
 # Citation
@@ -58,8 +68,8 @@ evaluation, tools) are available as `mise` tasks (`mise tasks` lists them) and a
 mise install                 # pinned Python 3.14 + uv
 mise run setup               # .venv with PyTorch 2.14 (CUDA 13.0), PyQt6, ...; see below for other CUDA versions
 mise run gpu:info            # check that PyTorch sees the GPU
-mise run download:models     # RT-DETR detector (Hugging Face cache) + pose-resnet weights
-# train the v2 weights (see above), then:
+mise run download:models     # RT-DETR detector + backbone ImageNet weights (Hugging Face cache)
+mise run train:all           # train the v2 weights (see above), then:
 mise run demo --video my_video.mp4
 mise run test                # unit tests (no data / GPU needed)
 ```
@@ -90,21 +100,20 @@ PEDREC_DATA_DIR = "/mnt/storage/pedrec_data"
 - Run the scripts from the repository root, e.g. `python pedrec/demo.py --help`
 
 ## Compatibility with the original data and weights
-All datasets / dataframes and the published training checkpoints (as initialization) work unchanged. The dataframes were pickled with pandas 1.3 / numpy 1.21; they are read through
+All datasets / dataframes work unchanged. The dataframes were pickled with pandas 1.3 / numpy 1.21; they are read through
 `pedrec.utils.pandas_helper.read_pedrec_df`, which converts numeric categorical columns that current pandas can not
 sum (tested with fixtures written by the original versions, `tests/data`). Optionally rewrite them once with the
 current versions: `mise run tools:convert-dfs data/datasets/ROMb/rt_rom_01b.pkl ...` (keeps a `.bak` copy).
 
 ## Required Data
 ### Pretrained models
-`mise run download:models` fetches the RT-DETRv2 detector (Apache 2.0, `PekingU/rtdetr_v2_r18vd` from the Hugging Face
-hub, `--rtdetr-model` selects another size or a local copy) and the pose-resnet weights. The PedRecNet v2 and ST-GCN
-weights are trained with this code (see above) and expected in *data/models/pedrec/experiment_pedrec_v2_p2d3d_c_o_h36m_sim_mebow_0_net.pth*
-and *data/models/ehpi3d/ehpi_stgcn_sim_c01_actionrec_gt_pred_64frames.pth*.
+`mise run download:models` fetches the RT-DETRv2 detector (Apache 2.0, `PekingU/rtdetr_v2_r18vd`, `--rtdetr-model`
+selects another size or a local copy) and the ImageNet weights of the PedRecNet backbone (timm `hgnetv2_b3`) into the
+Hugging Face cache. The v2 weights are trained with this code (`mise run train:all`) and expected in
 
-For the training:
-- [Simple Baselines for Human Pose Estimation Weights](https://dennisnotes.com/files/pedrec/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar) - adapted from https://github.com/microsoft/human-pose-estimation.pytorch - start of the stage chain, placed in data/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar.
-- Published (v1) training checkpoints of the stage chain: `mise run download:checkpoints <stage>` or https://dennisnotes.com/files/pedrec/single_results/experiment_pedrec_<stage>_0.pth, placed in *data/models/pedrec/single_results/*. A v2 stage whose predecessor has no v2 checkpoint is initialized from the v1 checkpoint.
+- *data/models/pedrec/experiment_pedrec_v2_p2d3d_c_o_0_net.pth* (PedRecNet, `mise run tools:extract-net --stage p2d3d_c_o`)
+- *data/models/pedrec/pedrec_v2_lifter.pth* (temporal 3D lifter)
+- *data/models/ehpi3d/ehpi_stgcn_sim_c01_actionrec_gt_pred_64frames.pth* (action recognition)
 
 ### Datasets
 - If you want to train the network(s) yourself, you need the following datasets:
@@ -126,7 +135,7 @@ overridden there or via the script options):
 ```
 data/
   datasets/COCO, Human3.6m/{train,val}, ROMb, RT3DValidate, cvpr10_multiview_pedestrians, Conti01
-  models/pedrec, models/pedrec/single_results (training checkpoints), models/ehpi3d, models/human_pose_baseline
+  models/pedrec, models/pedrec/single_results (training checkpoints), models/ehpi3d
   demo/
 ```
 
@@ -168,7 +177,8 @@ resizable window (closing the window docks it again).
 Useful options (see `python pedrec/demo.py --help`):
 - stages: `--no-detector`, `--no-pose`, `--no-tracking`, `--no-action`, `--action-list c01|c01_real`
 - speed: `--fast` (= `--half --channels-last`), `--compile`, `--prefetch N`, `--cpu`
-- `--size WxH`, `--max-frames N`, `--rtdetr-model`, `--pedrec-weights`, `--ehpi3d-weights`
+- `--no-lifter` (per frame 3D poses), `--size WxH`, `--max-frames N`, `--rtdetr-model`, `--pedrec-weights`,
+  `--lifter-weights`, `--ehpi3d-weights`
 
 The pipeline (`pedrec/inference/pipeline.py`, `PedRecPipeline`) can be embedded in your own code. It uploads every
 frame once, runs the person crops, normalization and coordinate transformations batched on the GPU and runs PedRecNet
@@ -176,24 +186,27 @@ exactly once per frame. The batched path is tested against a plain OpenCV implem
 (`tests/test_inference_equivalence.py`).
 
 # Training
-## PedRecNet
-The PedRecNet is trained as a chain of stages, each one initialized from its predecessor and adding datasets and / or
-loss terms (2D pose -> 3D pose -> joint confidence -> orientation). All stages are described in
-`pedrec/training/experiments/pedrec_stages.py` and trained with one script:
+`mise run train:all` runs the complete chain; the single steps:
 
 ```bash
-mise run train:list                                   # stage table incl. dependencies
-mise run train:pedrec --stage p2d_coco_only           # one stage (needs the pose-resnet weights)
-mise run train:pedrec:chain p2d3d_c_o_h36m_sim_mebow  # all stages from scratch, skips existing v2 checkpoints
-mise run train:pedrec --stage p2d3d_c_o_h36m_sim_mebow --init-weights my_checkpoint.pth --lr 2e-3 --batch-size 32
+mise run train:list                       # stage table
+mise run train:pedrec:2d                  # stage p2d_c: 2D pose + joint confidence, backbone from ImageNet
+mise run train:pedrec:full                # stage p2d3d_c_o: + 3D pose + orientation (demo network)
+mise run tools:extract-net --stage p2d3d_c_o
+mise run train:lifter:data                # PedRecNet results on SIM-C01 (input of the lifter training)
+mise run train:lifter                     # temporal 3D lifter
+mise run train:ehpi3d:data                # SIM-C01 results with the lifted 3D poses
+mise run train:ehpi3d                     # action recognition (ST-GCN)
 ```
 
-Shortcuts for the main milestones: `train:pedrec:2d`, `train:pedrec:3d`, `train:pedrec:conf`, `train:pedrec:orientation`.
-Each stage trains two rounds (frozen backbone, then full network with reduced learning rates), writes the checkpoints
+## PedRecNet
+Two stages (`pedrec/training/experiments/pedrec_stages.py`): `p2d_c` trains the neck and the 2D / confidence heads on
+COCO, Human3.6m and SIM starting from the ImageNet backbone, `p2d3d_c_o` adds the 3D pose and the orientations (COCO
+with the MEBOW labels). Each stage trains two rounds (frozen backbone, then the full network), writes
 `experiment_pedrec_v2_<stage>_0_01.pth` / `experiment_pedrec_v2_<stage>_0.pth` (EMA weights), the best epoch
-`experiment_pedrec_v2_<stage>_0_best.pth` and a markdown protocol into *data/models/pedrec/single_results/*. Stages without a fixed learning rate run the LR range test first (plot saved next
-to the checkpoint); `--lr` skips it, `--lr-finder` forces it. The demo needs the plain network weights, extract them
-with `mise run tools:extract-net --stage <stage>`.
+`experiment_pedrec_v2_<stage>_0_best.pth` and a markdown protocol into *data/models/pedrec/single_results/*. The epochs
+per round are stage defaults (`--epochs-round-1/2` override them). Without `--lr` the LR range test runs first (plot
+next to the checkpoint). The schedules are starting points: check the protocols of the first runs.
 
 Training stability options (PedRecNet and action recognition):
 
@@ -210,15 +223,22 @@ the mean relative improvement of all validation metrics (PCK, MPJPE, joint accur
 the first epoch. `--dataset-weights coco=1,h36m=1,sim=1` samples the training datasets with the given
 relative probabilities instead of proportional to their size.
 
+## Temporal 3D lifter
+`pedrec/training/train_lifter.py` trains the causal lifter on 3D ground truth sequences of Human3.6m, SIM-ROM and
+SIM-C01 (only the dataframes are needed). Inputs are the PedRecNet predictions where available (SIM-C01 results of
+`train:lifter:data`) and otherwise the ground truth with noise that imitates the per frame errors. Every epoch reports
+the 3D error (MPJPE) of the per frame PedRecNet poses and of the lifted poses per validation set; the best epoch is
+saved, and a warning is logged if the lifter does not improve on the per frame poses.
+
 ## Action recognition (ST-GCN on EHPI sequences)
 ```bash
 mise run train:ehpi3d:list                     # variants (gt / pred / mixed skeletons x 30 fps / 15 fps / 64 frames)
 mise run train:ehpi3d --variant gt_pred_64frames
 ```
 
-The training needs the SIM-C01 skeleton dataframes and the PedRecNet results on them (`*_allframes.pkl`, see
-"Generate own training data"). `mise run train:ehpi3d:data` regenerates the result dataframes with the trained PedRecNet
-v2. `mise run tools:ehpi-videos` creates the skeleton dataframe of the real EHPI videos with the full pipeline.
+The training uses the SIM-C01 skeleton dataframes and the PedRecNet results on them with the lifted 3D poses
+(`*_allframes_lifted.pkl`, `mise run train:ehpi3d:data`), i.e. the same 3D poses the pipeline produces at runtime.
+`mise run tools:ehpi-videos` creates the skeleton dataframe of the real EHPI videos with the full pipeline.
 
 # Evaluation
 | Task | What it does |
@@ -234,14 +254,15 @@ v2. `mise run tools:ehpi-videos` creates the skeleton dataframe of the real EHPI
 # Project structure
 ```
 pedrec/demo.py                  demo / inference CLI (GUI + headless)
-pedrec/inference/pipeline.py    PedRecPipeline: detector -> pose -> tracking -> actions
+pedrec/inference/pipeline.py    PedRecPipeline: detector -> pose -> tracking -> 3D lifting -> actions
 pedrec/inference/gpu_ops.py     batched device side crops, resize, coordinate transforms
 pedrec/tracking/                ByteTrack style tracker, One Euro filter
 pedrec/training/train_pedrec.py PedRecNet training (stages: pedrec/training/experiments/pedrec_stages.py)
+pedrec/training/train_lifter.py temporal 3D lifter training
 pedrec/training/train_ehpi3d.py action recognition training (variants: pedrec/training/experiments/ehpi3d_variants.py)
 pedrec/evaluations/             validation / evaluation scripts
 pedrec/tools/                   dataset generators, result writers, weight tools
-pedrec/networks/                PedRecNet, ST-GCN, RT-DETR wrapper
+pedrec/networks/                PedRecNet, temporal 3D lifter, ST-GCN, RT-DETR wrapper
 pedrec/datasets/, pedrec/configs/, pedrec/utils/, pedrec/tracking/, pedrec/ui/, pedrec/visualizers/
 doc/                            experiment protocols, evaluation results, architecture review
 tests/                          unit tests (mise run test)
@@ -250,7 +271,7 @@ tests/                          unit tests (mise run test)
 # Generate own training data
 Check out the panda dataframes (e.g. the rt_conti_01_train_FIN.pkl from SIM-C01 dataset, or the pkls from the H36M dataset). If you provide a dataset of the same structure you can just use the pedrec dataset class.
 You can find some scripts I used to generate the dataframes in `pedrec/tools/datasets/`, but I have not tested them in a while.
-The same applies for EHPI3D action recognition data: Check out the dataframes from the rt_conti_01_train_FIN.pkl file! You might want to checkout the notebook *dataset_rtsim_conti01_ehpi* as well. The PedRecNet result dataframes for SIM-C01 can be regenerated with `mise run train:ehpi3d:data`. You can find the result files (e.g. the C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_allframes.pkl) at https://dennisnotes.com/files/pedrec/result_dfs/filename.
+The same applies for EHPI3D action recognition data: Check out the dataframes from the rt_conti_01_train_FIN.pkl file! You might want to checkout the notebook *dataset_rtsim_conti01_ehpi* as well. The PedRecNet result dataframes for SIM-C01 can be regenerated with `mise run train:lifter:data`. You can find the result files of v1 (e.g. the C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_allframes.pkl) at https://dennisnotes.com/files/pedrec/result_dfs/filename; v2 writes its own (`experiment_pedrec_v2_p2d3d_c_o_0`).
 
 # Notebooks
 I've just pasted a few of my notebooks in the notebooks folder. They are not cleaned up and may contain absolute paths etc. but maybe they help the one or other to understand some concepts / validation results.

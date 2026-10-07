@@ -5,8 +5,9 @@ and the three ST-GCN partitions (self, towards the hip, away from the hip).
 
 The network takes the same EHPI input as before (B x 3 x 32 rows x T frames, normalized with the EHPI mean / std, rows
 in EHPI joint order, 26 joints + padding rows), so the EHPI datasets and dataframes are used unchanged. Compared to
-the previous ResNet-50 on the EHPI image it uses the skeleton topology explicitly and has ~2M instead of ~23.5M
-parameters.
+the previous ResNet-50 on the EHPI image it uses the skeleton topology explicitly, has ~0.2M instead of ~23.5M
+parameters and needs ~116 instead of ~167 MMACs per sequence (64 frames): separable temporal convolutions and an early
+temporal stride keep it light.
 """
 from collections import deque
 
@@ -70,10 +71,15 @@ class StGcnBlock(nn.Module):
                  dropout: float = 0.1, residual: bool = True):
         super().__init__()
         self.gcn = GraphConv(in_channels, out_channels, adjacency)
+        # temporal convolution separated into depthwise (9 frames) + pointwise (as in EfficientGCN / MobileNet)
         self.tcn = nn.Sequential(
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=(9, 1), stride=(stride, 1), padding=(4, 0)),
+            nn.Conv2d(out_channels, out_channels, kernel_size=(9, 1), stride=(stride, 1), padding=(4, 0),
+                      groups=out_channels, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.Dropout(dropout, inplace=True),
         )
@@ -82,7 +88,8 @@ class StGcnBlock(nn.Module):
         elif in_channels == out_channels and stride == 1:
             self.residual = nn.Identity()
         else:
-            self.residual = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=(stride, 1)),
+            self.residual = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=(stride, 1),
+                                                    bias=False),
                                           nn.BatchNorm2d(out_channels))
         self.relu = nn.ReLU(inplace=True)
 
@@ -94,7 +101,7 @@ class StGcnBlock(nn.Module):
 
 
 class EhpiStGcn(nn.Module):
-    def __init__(self, num_actions: int, channels=(64, 64, 64, 128, 128, 256, 256), strides=(1, 1, 1, 2, 1, 2, 1),
+    def __init__(self, num_actions: int, channels=(48, 48, 96, 96, 192), strides=(2, 1, 2, 1, 1),
                  dropout: float = 0.1):
         super().__init__()
         adjacency = torch.from_numpy(get_ehpi_partitioned_adjacency())

@@ -7,7 +7,7 @@ sequences) and the full pipeline per stage.
     python pedrec/tools/benchmark_pipeline.py --random-weights --cpu  # no weight files / downloads needed
 
 Without ``--random-weights`` the default PedRecNet / ST-GCN weights below the data root and the configured RT-DETR
-model are used. With ``--random-weights`` the RT-DETR model uses the default transformers RT-DETRv2 configuration.
+model are used. With ``--random-weights`` the RT-DETR model has the architecture of RT-DETRv2-R18.
 """
 import sys
 
@@ -31,6 +31,7 @@ from pedrec.models.data_structures import ImageSize
 from pedrec.networks.net_detr.rtdetr_detector import RTDetrDetector
 from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
+from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter
 from pedrec.utils.log_helper import configure_logger
 from pedrec.utils.torch_utils.torch_helper import get_device
 
@@ -81,14 +82,18 @@ def timeit(fn, device, repeats: int, warmup: int = 3):
     return statistics.median(times)
 
 
-def random_models(device: torch.device, num_actions: int, half: bool):
+def random_models(device: torch.device, num_actions: int, half: bool, channels_last: bool):
     import transformers
     torch.manual_seed(0)
     pose_net = PedRecNet(PedRecNetConfig())
     pose_net.init_weights()
-    detr = transformers.RTDetrV2ForObjectDetection(transformers.RTDetrV2Config(num_labels=80))
-    detector = RTDetrDetector(device, "random", half=half, model=detr)
-    return detector, pose_net, EhpiStGcn(num_actions)
+    # same architecture as PekingU/rtdetr_v2_r18vd (ResNet-18-vd backbone, 3 decoder layers), random weights
+    backbone = transformers.RTDetrResNetConfig(layer_type="basic", depths=[2, 2, 2, 2],
+                                               hidden_sizes=[64, 128, 256, 512], out_features=["stage2", "stage3", "stage4"])
+    detr = transformers.RTDetrV2ForObjectDetection(transformers.RTDetrV2Config(
+        num_labels=80, backbone_config=backbone, encoder_in_channels=[128, 256, 512], decoder_layers=3))
+    detector = RTDetrDetector(device, "random", half=half, model=detr, channels_last=channels_last)
+    return detector, pose_net, EhpiStGcn(num_actions), TemporalPoseLifter(PedRecNetConfig().model.num_joints)
 
 
 def parse_args(argv=None):
@@ -124,7 +129,7 @@ def main(argv=None):
 
     runtime = RuntimeConfig(half=args.half, channels_last=args.channels_last, compile=args.compile)
     cfg = PipelineConfig(data_root=args.data_dir, human_min_score=0.0, runtime=runtime)
-    models = random_models(device, num_actions, args.half) if args.random_weights else (None, None, None)
+    models = random_models(device, num_actions, args.half, args.channels_last) if args.random_weights else (None, None, None, None)
     pipeline = PedRecPipeline(cfg, app_cfg, device, *models)
 
     device_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
@@ -149,9 +154,17 @@ def main(argv=None):
         with torch.inference_mode():
             pipeline.action_recognizer(ehpis)
 
+    lifter_input = torch.rand(args.persons, pipeline.lifter.window, PedRecNetConfig().model.num_joints, 6,
+                              device=device)
+
+    def run_lifter():
+        with torch.inference_mode():
+            pipeline.lifter.run(lifter_input)
+
     print("\nNetworks (median, ms)")
     for name, fn in [("detector (RT-DETR)", run_detector),
                      (f"pose (PedRecNet, {args.persons} persons)", run_pose),
+                     (f"3D lifter ({args.persons} tracks)", run_lifter),
                      (f"action (ST-GCN, {args.persons} persons)", run_action)]:
         print(f"{name:38} {timeit(fn, device, args.repeats) * 1000:8.1f}")
 

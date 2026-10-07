@@ -58,25 +58,11 @@ run = [
 ]
 
 [tasks."download:models"]
-description = "Download the RT-DETRv2 detector into the Hugging Face cache and the pose-resnet weights (start of the training chain)"
-run = """
-set -euo pipefail
-python -c "from pedrec.configs.default_paths import RTDETR_MODEL; from transformers import AutoModelForObjectDetection as M; M.from_pretrained(RTDETR_MODEL)"
-f="$PEDREC_DATA_DIR/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar"
-mkdir -p "$(dirname "$f")"
-if [ -f "$f" ]; then echo "exists: $f"; else curl -L --fail -o "$f" "https://dennisnotes.com/files/pedrec/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar"; fi
-"""
-
-[tasks."download:checkpoints"]
-description = "Download a published (v1) training checkpoint to initialize the v2 training from: mise run download:checkpoints [stage]"
-run = """
-set -euo pipefail
-stage="{{arg(name="stage", default="p2d3d_c_o_h36m_sim")}}"
-dir="$PEDREC_DATA_DIR/models/pedrec/single_results"
-mkdir -p "$dir"
-file="experiment_pedrec_${stage}_0.pth"
-if [ -f "$dir/$file" ]; then echo "exists: $dir/$file"; else curl -L --fail -o "$dir/$file" "https://dennisnotes.com/files/pedrec/single_results/$file"; fi
-"""
+description = "Download the RT-DETRv2 detector and the ImageNet weights of the PedRecNet backbone (HGNetV2-B3) into the Hugging Face cache"
+run = [
+    "python -c \"from pedrec.configs.default_paths import RTDETR_MODEL; from transformers import AutoModelForObjectDetection as M; M.from_pretrained(RTDETR_MODEL)\"",
+    "python -c \"import timm; from pedrec.configs.pedrec_net_config import PedRecNetConfig; timm.create_model(PedRecNetConfig().model.backbone, pretrained=True)\"",
+]
 
 [tasks."download:demo"]
 description = "Download the demo video into $PEDREC_DATA_DIR/demo"
@@ -143,14 +129,14 @@ description = "List the PedRecNet training stages and their dependencies"
 run = "python pedrec/training/train_pedrec.py --list"
 
 [tasks."train:pedrec"]
-description = "Train one PedRecNet stage (default: p2d3d_c_o_h36m_sim_mebow, initialized from the downloaded v1 checkpoint); e.g. --stage p2d_coco_only"
+description = "Train one PedRecNet stage (default: p2d3d_c_o, the demo network; needs p2d_c first); e.g. --stage p2d_c"
 run = "python pedrec/training/train_pedrec.py"
 
 [tasks."train:pedrec:chain"]
-description = "Train all stages up to the given one from scratch, skipping stages with an existing v2 checkpoint: mise run train:pedrec:chain [stage]"
+description = "Train all PedRecNet stages up to the given one (default p2d3d_c_o), skipping stages with an existing checkpoint"
 run = """
 set -euo pipefail
-target="{{arg(name="stage", default="p2d3d_c_o_h36m_sim_mebow")}}"
+target="{{arg(name="stage", default="p2d3d_c_o")}}"
 for stage in $(python pedrec/training/train_pedrec.py --chain --stage "$target" | sed 's/ -> / /g'); do
   ckpt="$PEDREC_DATA_DIR/models/pedrec/single_results/experiment_pedrec_v2_${stage}_0.pth"
   if [ -f "$ckpt" ]; then echo "### skipping $stage (checkpoint exists: $ckpt)"; continue; fi
@@ -160,20 +146,25 @@ done
 """
 
 [tasks."train:pedrec:2d"]
-description = "Train the 2D pose stage only (COCO, from pose-resnet weights)"
-run = "python pedrec/training/train_pedrec.py --stage p2d_coco_only"
+description = "Train the first stage: 2D pose + joint confidence on COCO + Human3.6m + SIM, backbone from ImageNet"
+run = "python pedrec/training/train_pedrec.py --stage p2d_c"
 
-[tasks."train:pedrec:3d"]
-description = "Train the 2D + 3D pose stage (COCO + Human3.6m + SIM)"
-run = "python pedrec/training/train_pedrec.py --stage p2d3d_h36m_sim"
+[tasks."train:pedrec:full"]
+description = "Train the second stage: + 3D pose + orientation (COCO MEBOW + Human3.6m + SIM) = demo network"
+run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_o"
 
-[tasks."train:pedrec:conf"]
-description = "Train the joint confidence stage (COCO + Human3.6m + SIM)"
-run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_h36m_sim"
+[tasks."train:lifter:data"]
+description = "PedRecNet results on SIM-C01 train + val, expanded to all frames (input of the 3D lifter training)"
+run = [
+    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split train",
+    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split train",
+    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split val",
+    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split val",
+]
 
-[tasks."train:pedrec:orientation"]
-description = "Train the full network incl. orientation (COCO MEBOW + Human3.6m + SIM) = demo model"
-run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_o_h36m_sim_mebow"
+[tasks."train:lifter"]
+description = "Train the temporal 3D lifter on Human3.6m / SIM-ROM / SIM-C01 sequences (only dataframes needed)"
+run = "python pedrec/training/train_lifter.py"
 
 [tasks."train:ehpi3d:list"]
 description = "List the action recognition (ST-GCN on EHPI sequences) training variants"
@@ -184,12 +175,21 @@ description = "Train an ST-GCN action recognition variant (default: gt_pred_64fr
 run = "python pedrec/training/train_ehpi3d.py"
 
 [tasks."train:ehpi3d:data"]
-description = "Create the action recognition training input: PedRecNet results on SIM-C01 train + val, expanded to all frames"
+description = "Action recognition training input: SIM-C01 results with the 3D poses of the lifter (after train:lifter)"
 run = [
-    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split train",
-    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split train",
-    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split val",
-    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split val",
+    "python pedrec/tools/resultwriters/lift_sim_c01_results.py --split train",
+    "python pedrec/tools/resultwriters/lift_sim_c01_results.py --split val",
+]
+
+[tasks."train:all"]
+description = "Complete v2 training: PedRecNet stages -> demo weights -> 3D lifter -> action recognition"
+run = [
+    "mise run train:pedrec:chain p2d3d_c_o",
+    "python pedrec/tools/networks/mtl_net_extractor.py --stage p2d3d_c_o",
+    "mise run train:lifter:data",
+    "mise run train:lifter",
+    "mise run train:ehpi3d:data",
+    "mise run train:ehpi3d",
 ]
 
 # ------------------------------------------------------------------------------------------------------- evaluation

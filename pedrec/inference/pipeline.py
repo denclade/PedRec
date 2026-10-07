@@ -1,8 +1,8 @@
 """
 PedRec inference pipeline:
 
-    RT-DETRv2 detector -> PedRecNet (2D / 3D pose, orientation, joint confidence) -> ByteTrack -> One Euro smoothing
-    -> ST-GCN action recognition
+    RT-DETRv2 detector -> PedRecNet (2D / 3D pose, orientation, joint confidence) -> ByteTrack
+    -> temporal 3D lifter (per track, causal) + One Euro smoothing of the orientations -> ST-GCN action recognition
 
 It is used by the Qt demo (``pedrec/demo.py``), the benchmark and the dataset tools. Every stage can be disabled (e.g.
 only the detector, or the pose net on the full frame without a detector).
@@ -17,6 +17,7 @@ Performance relevant design decisions:
 """
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
@@ -33,6 +34,7 @@ from pedrec.models.human import Human
 from pedrec.networks.net_detr.rtdetr_detector import RTDetrDetector
 from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
+from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter, lifter_features
 from pedrec.tracking.byte_tracker import ByteTracker
 from pedrec.tracking.one_euro import HumanStateSmoother
 from pedrec.utils.augmentation_helper import get_normalization_size
@@ -66,10 +68,12 @@ class PipelineConfig:
     use_detector: bool = True  # if False the full frame is used as the (single) human bb
     use_pose: bool = True  # PedRecNet 2D / 3D pose + orientation + joint confidence
     use_tracking: bool = True  # ByteTrack id assignment + One Euro smoothing (requires pose)
+    use_lifter: bool = True  # temporal 3D lifting over the frames of each track (requires tracking)
     use_action: bool = True  # ST-GCN action recognition (requires pose + tracking)
 
     rtdetr_model: str = default_paths.RTDETR_MODEL  # Hugging Face id or local directory
     pedrec_weights: Optional[str] = None
+    lifter_weights: Optional[str] = None
     ehpi3d_weights: Optional[str] = None
     data_root: Optional[str] = None
 
@@ -90,6 +94,8 @@ class PipelineConfig:
             raise ValueError("Action recognition requires pose estimation and tracking.")
         if self.use_tracking and not self.use_pose:
             raise ValueError("Tracking requires pose estimation.")
+        if self.use_lifter and not self.use_tracking:
+            raise ValueError("The temporal 3D lifter requires tracking.")
 
 
 @dataclass
@@ -114,8 +120,10 @@ def get_full_frame_bb(img_size: ImageSize) -> np.ndarray:
 class _Runner:
     """Executes a network with the configured runtime options (autocast, memory format, torch.compile)."""
 
-    def __init__(self, module: torch.nn.Module, device: torch.device, runtime: RuntimeConfig):
+    def __init__(self, module: torch.nn.Module, device: torch.device, runtime: RuntimeConfig, images: bool = True):
+        """:param images: the inputs are images (B x C x H x W), i.e. channels_last applies"""
         module = module.to(device).eval()
+        runtime = RuntimeConfig(runtime.half, runtime.channels_last and images, runtime.compile)
         if runtime.channels_last:
             module = module.to(memory_format=torch.channels_last)
         if runtime.compile:
@@ -199,13 +207,61 @@ class ActionRecognizer:
         return torch.sigmoid(self.run(batch).float()).cpu().numpy()
 
 
+class TemporalLifter:
+    """
+    Temporal 3D lifter (``pose_lifter.TemporalPoseLifter``) on the per frame PedRecNet outputs of each track. Frames
+    in which a person was not seen repeat its last known state, as in the training.
+    """
+
+    def __init__(self, weights: str, num_joints: int, device: torch.device, runtime: RuntimeConfig,
+                 history_stride: int = 1, net: Optional[torch.nn.Module] = None):
+        if net is None:
+            net = TemporalPoseLifter(num_joints)
+            net.load_state_dict(load_state_dict_file(weights))
+            logger.info(f"Loaded temporal 3D lifter (weights: {weights})")
+        self.window = net.window
+        self.stride = history_stride
+        self.device = device
+        self.run = _Runner(net, device, runtime, images=False)
+        self.histories: Dict[int, deque] = {}
+
+    def reset(self):
+        self.histories.clear()
+
+    def remove(self, uid: int):
+        self.histories.pop(uid, None)
+
+    def _window(self, frame_nr: int, history: deque) -> np.ndarray:
+        frames = np.array([entry[0] for entry in history])
+        targets = frame_nr - self.stride * np.arange(self.window - 1, -1, -1)
+        # latest entry at or before each target frame; before the first entry the first one is repeated
+        indices = np.clip(np.searchsorted(frames, targets, side="right") - 1, 0, None)
+        return np.stack([history[i][1] for i in indices])
+
+    @torch.inference_mode()
+    def __call__(self, frame_nr: int, humans: List[Human]):
+        """Replaces the 3D poses (x, y, z) of the tracked humans with the lifted poses."""
+        if len(humans) == 0:
+            return
+        windows = []
+        for human in humans:
+            history = self.histories.setdefault(human.uid, deque(maxlen=self.window * self.stride + 1))
+            history.append((frame_nr, human.lifter_features))
+            windows.append(self._window(frame_nr, history))
+        lifted = self.run(torch.from_numpy(np.stack(windows)).to(self.device)).float().cpu().numpy()
+        for human, pose in zip(humans, lifted):
+            skeleton_3d = human.skeleton_3d.copy()
+            skeleton_3d[:, :3] = pose * SKELETON_3D_RANGE
+            human.skeleton_3d = skeleton_3d
+
+
 class PedRecPipeline:
     def __init__(self, cfg: PipelineConfig, app_cfg: AppConfig, device: torch.device,
                  detector: Optional[RTDetrDetector] = None, pose_net: Optional[torch.nn.Module] = None,
-                 action_net: Optional[torch.nn.Module] = None):
+                 action_net: Optional[torch.nn.Module] = None, lifter_net: Optional[torch.nn.Module] = None):
         """
-        :param detector, pose_net, action_net: already constructed models (tests / benchmarks); by default they are
-            loaded from ``cfg``
+        :param detector, pose_net, action_net, lifter_net: already constructed models (tests / benchmarks); by
+            default they are loaded from ``cfg``
         """
         cfg.validate()
         self.cfg = cfg
@@ -222,7 +278,8 @@ class PedRecPipeline:
 
         self.detector = None
         if cfg.use_detector:
-            self.detector = detector or RTDetrDetector(device, cfg.rtdetr_model, half=runtime.half)
+            self.detector = detector or RTDetrDetector(device, cfg.rtdetr_model, half=runtime.half,
+                                                       channels_last=runtime.channels_last)
         self.pose_estimator = None
         if cfg.use_pose:
             self.pose_estimator = PedRecPoseEstimator(
@@ -239,22 +296,24 @@ class PedRecPipeline:
                                        new_track_thresh=cfg.person_high_thresh, max_time_lost=cfg.track_max_lost)
         self.smoothers: Dict[int, HumanStateSmoother] = {}
 
-        # EHPI temporal sampling: use every n-th frame if the source has a higher frame rate than the model
+        # EHPI / lifter temporal sampling: use every n-th frame if the source has a higher frame rate than the models
         self.history_stride = max(1, int(round(cfg.source_fps / cfg.model_fps)))
+        self.lifter = None
+        if cfg.use_lifter:
+            self.lifter = TemporalLifter(cfg.lifter_weights or default_paths.lifter_weights(cfg.data_root),
+                                         PedRecNetConfig().model.num_joints, device, runtime, self.history_stride,
+                                         lifter_net)
         buffer_size = max(app_cfg.inference.buffer_size, self.history_stride * cfg.temporal_field.width)
         self.image_content_buffer = ImageContentBuffer(buffer_size=buffer_size)
 
     def reset(self):
-        """Forgets the temporal state (tracks, smoothing, action history), e.g. after a jump in a video."""
-        if self.byte_tracker is not None:
-            next_uid = self.byte_tracker.next_uid  # keep the ids unique over the whole video
-            self.byte_tracker.reset()
-            self.byte_tracker.next_uid = next_uid
-        if self.legacy_tracker is not None:
-            next_uid = self.legacy_merger.next_human_uid
-            self.legacy_tracker = HumanTracker(img_size=self.img_size)
-            self.legacy_merger = HumanMerger(self.img_size)
-            self.legacy_merger.next_human_uid = next_uid
+        """Forgets the temporal state (tracks, smoothing, 3D / action history), e.g. after a jump in a video."""
+        if self.tracker is not None:
+            next_uid = self.tracker.next_uid  # keep the ids unique over the whole video
+            self.tracker.reset()
+            self.tracker.next_uid = next_uid
+        if self.lifter is not None:
+            self.lifter.reset()
         self.smoothers.clear()
         self.image_content_buffer = ImageContentBuffer(buffer_size=self.image_content_buffer.buffer_size)
 
@@ -275,7 +334,11 @@ class PedRecPipeline:
 
     def estimate_poses(self, frame: torch.Tensor, human_bbs: List[np.ndarray]) -> List[Human]:
         preds = self.pose_estimator(frame, human_bbs)
-        return get_humans_from_pedrec_detections(human_bbs, preds)
+        humans = get_humans_from_pedrec_detections(human_bbs, preds)
+        if self.lifter is not None:
+            for human, bb in zip(humans, human_bbs):
+                human.lifter_features = lifter_features(human.skeleton_2d, human.skeleton_3d, bb)
+        return humans
 
     def track(self, humans: List[Human], human_bbs: List[np.ndarray]) -> List[Human]:
         """Assigns track ids; humans that are not (yet) part of a confirmed track are dropped."""
@@ -287,6 +350,8 @@ class PedRecPipeline:
             result = self.tracker.update(bbs, scores, humans)
         for uid in result.removed_uids:
             self.smoothers.pop(uid, None)
+            if self.lifter is not None:
+                self.lifter.remove(uid)
         tracked = []
         for det_idx, uid in result.assignments.items():
             humans[det_idx].uid = uid
@@ -297,7 +362,8 @@ class PedRecPipeline:
         dt = 1.0 / self.cfg.source_fps
         for human in humans:
             smoother = self.smoothers.setdefault(human.uid, HumanStateSmoother())
-            human.skeleton_3d = smoother.smooth_skeleton_3d(human.skeleton_3d, dt)
+            if self.lifter is None:  # the lifted 3D poses are already temporally consistent
+                human.skeleton_3d = smoother.smooth_skeleton_3d(human.skeleton_3d, dt)
             human.orientation = smoother.smooth_orientation(human.orientation, dt)
 
     def _get_ehpi_history(self, uid: int) -> List[Human]:
@@ -354,6 +420,9 @@ class PedRecPipeline:
                 humans = self.track(humans, human_bbs)
                 t = lap("tracking", t)
             humans = [human for human in humans if human.score > self.cfg.human_min_score]
+            if self.lifter is not None:
+                self.lifter(frame_nr, humans)
+                t = lap("lifting", t)
             if self.tracker is not None:
                 self.smooth(humans)
         else:
