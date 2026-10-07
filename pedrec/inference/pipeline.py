@@ -261,7 +261,9 @@ class PedRecPipeline:
         self.img_size: ImageSize = app_cfg.inference.img_size
         runtime = cfg.runtime
         if device.type == "cuda":
-            torch.backends.cudnn.benchmark = True
+            # no cudnn.benchmark: the number of person crops (= batch size) changes from frame to frame and every new
+            # batch size would trigger a new benchmark of all convolutions (~1 s stalls in videos)
+            torch.backends.cudnn.benchmark = False
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
 
