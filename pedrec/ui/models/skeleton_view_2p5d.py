@@ -31,42 +31,28 @@ class SkeletonView2p5D(gl.GLViewWidget):
         self.addItem(self.axis)
 
     def clear(self):
-        # if self.axis is not None:
-        #     self.removeItem(self.axis)
-        #     self.axis = None
+        # the items are reused (setData) instead of being removed and recreated every frame
         if self.current_joints is not None:
-            self.removeItem(self.current_joints)
-            self.current_joints = None
-        if self.current_limbs is not None:
-            self.removeItem(self.current_limbs)
-            self.current_limbs = None
+            self.current_joints.setVisible(False)
+            self.current_limbs.setVisible(False)
 
     def add_skeleton(self, skeleton: np.ndarray):
         if self.axis is None:
             self.set_axis()
-        # convert from mm to meter for display
-        skeleton[:, 0] /= 1000
-        skeleton[:, 1] /= 1000
-        skeleton[:, 2] /= 1000
-
-        skel = ""
-        for joint in SKELETON_PEDREC_JOINT:
-            j = skeleton[joint.value].copy() * 10
-            skel += f"{j[0]:.2f}/{j[1]:.2f}/{j[2]:.2f}/{1.0}/{1.0},"
-        # print(skel)
-
+        skeleton = skeleton.copy()
+        skeleton[:, :3] /= 1000  # mm -> m
         hip = skeleton[SKELETON_PEDREC_JOINT.hip_center.value]
         skeleton[:, :3] -= hip[:3]
-
-
-        # switch x and z
-        skeleton[:, [1, 2]] = skeleton[:, [2, 1]]
+        skeleton[:, [1, 2]] = skeleton[:, [2, 1]]  # z up
 
         joints, joint_colors = get_joint_positions(skeleton)
         limbs, limb_colors = get_limb_positions(skeleton)
-
-        self.current_joints = gl.GLScatterPlotItem(pos=joints, color=joint_colors)
-        self.addItem(self.current_joints)
-
-        self.current_limbs = gl.GLLinePlotItem(pos=limbs, color=limb_colors, width=1, antialias=False)
-        self.addItem(self.current_limbs)
+        if self.current_joints is None:
+            self.current_joints = gl.GLScatterPlotItem()
+            self.addItem(self.current_joints)
+            self.current_limbs = gl.GLLinePlotItem(mode="lines", width=1, antialias=False)
+            self.addItem(self.current_limbs)
+        self.current_joints.setData(pos=joints.reshape(-1, 3), color=joint_colors.reshape(-1, 4))
+        self.current_limbs.setData(pos=limbs.reshape(-1, 3), color=limb_colors.reshape(-1, 4))
+        self.current_joints.setVisible(len(joints) > 0)
+        self.current_limbs.setVisible(len(limbs) > 0)
