@@ -212,9 +212,10 @@ def run_headless(pipeline: PedRecPipeline, input_provider: InputProviderBase, im
     logger.info(f"Processed {frame_nr} frames")
 
 
-def run_gui(pipeline: PedRecPipeline, input_provider: InputProviderBase, app_cfg: AppConfig):
+def run_gui(pipeline: PedRecPipeline, app_cfg: AppConfig, args):
     os.environ.setdefault("QT_API", "pyqt6")
     from qtpy.QtWidgets import QApplication
+    from pedrec.ui.frame_source import open_frame_source
     from pedrec.ui.pedrec_app import PedRecApp
     from pedrec.ui.pipeline_worker import PipelineWorker
 
@@ -222,7 +223,12 @@ def run_gui(pipeline: PedRecPipeline, input_provider: InputProviderBase, app_cfg
     # pyqtgraph shares its shader programs between all 3D views, which requires shared OpenGL contexts
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
-    worker = PipelineWorker(app, input_provider, pipeline)
+    # seekable source for the player (video files, image sequences); webcams are live sources
+    source = open_frame_source(app_cfg.inference.img_size, video=args.video, images=args.images, image=args.image,
+                               webcam=args.webcam, mirror=args.mirror, fps=args.source_fps)
+    # video files: do not play faster than their frame rate (webcams / image sequences are not limited)
+    max_fps = pipeline.cfg.source_fps if args.video is not None else args.fps
+    worker = PipelineWorker(app, source, pipeline, max_fps=max_fps)
     PedRecApp(app, worker, app_cfg)
     sys.exit(app.exec())
 
@@ -305,12 +311,11 @@ def main(argv=None):
 
     device = get_device(app_cfg.cuda.use_gpu)
     pipeline = PedRecPipeline(get_pipeline_config(args), app_cfg, device)
-    input_provider = get_input_provider(args, app_cfg.inference.img_size)
 
     if args.headless:
-        run_headless(pipeline, input_provider, app_cfg.inference.img_size, args)
+        run_headless(pipeline, get_input_provider(args, app_cfg.inference.img_size), app_cfg.inference.img_size, args)
     else:
-        run_gui(pipeline, input_provider, app_cfg)
+        run_gui(pipeline, app_cfg, args)
 
 
 if __name__ == '__main__':

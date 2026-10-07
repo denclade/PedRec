@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Pedestrian Recognition Network - Cognitive Systems - Reutlingen University</string>
+   <string>PedRec</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QHBoxLayout" name="horizontalLayout">
@@ -48,7 +48,7 @@
          <bool>true</bool>
         </property>
         <property name="title">
-         <string>Skeleton 3D</string>
+         <string>3D Pose</string>
         </property>
         <property name="flat">
          <bool>true</bool>
@@ -63,7 +63,7 @@
       <item row="3" column="2">
        <widget class="QGroupBox" name="groupBox_4">
         <property name="title">
-         <string>Orientations</string>
+         <string>Orientation</string>
         </property>
         <property name="flat">
          <bool>true</bool>
@@ -78,7 +78,7 @@
       <item row="3" column="0">
        <widget class="QGroupBox" name="ehpi_groupbox">
         <property name="title">
-         <string>Encoded Human Pose Image (EHPI)</string>
+         <string>EHPI  (x: time, y: joints)</string>
         </property>
         <property name="flat">
          <bool>true</bool>
@@ -346,7 +346,7 @@
   </customwidget>
   <customwidget>
    <class>OrientationView</class>
-   <extends>QOpenGLWidget</extends>
+   <extends>QWidget</extends>
    <header>pedrec.ui.models.orientation_view</header>
   </customwidget>
   <customwidget>
