@@ -1,16 +1,15 @@
 import os
-import sys
 from typing import List
 
-import cv2
 import numpy as np
-from qtpy.QtCore import Slot
-from qtpy.QtGui import QImage, QPixmap, QFontDatabase
-from qtpy.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QGroupBox, QDialog, QHBoxLayout
-from qtpy import uic, QtCore
+from qtpy.QtCore import Slot, Qt
+from qtpy.QtGui import QImage, QPixmap
+from qtpy.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QDialog, QHBoxLayout
+from qtpy import uic
 
 from pedrec.configs.app_config import AppConfig
 from pedrec.models.human import Human
+from pedrec.ui import theme
 from pedrec.ui.models.pedrec_ui_config import PedRecUIConfig
 from pedrec.ui.pedrec_worker import PedRecWorker
 from pedrec.utils.skeleton_helper_3d import get_human_size_from_skeleton_3d
@@ -24,7 +23,7 @@ UI_DIR = os.path.dirname(os.path.abspath(__file__))
 class PedRecApp(QMainWindow):
     def __init__(self, app: QApplication, worker: PedRecWorker, app_cfg: AppConfig):
         super().__init__()
-        app.setStyle('Breeze')
+        theme.apply_theme(app)
         uic.loadUi(os.path.join(UI_DIR, "mainwindow.ui"), self)
         self.cfg_path = os.path.join(UI_DIR, ".ui_cfg.pkl")
         self.cfg = PedRecUIConfig()
@@ -37,12 +36,14 @@ class PedRecApp(QMainWindow):
         self.selected_human_uid: int = None
         self.humans: List[Human] = None
         self.worker = worker
-        self.frame_nr_label = QLabel("Frame: No data")
-        self.fps_label = QLabel("FPS: No data")
-        self.actions_label = QLabel("Actions: No data")
-        self.human_score_label = QLabel("-")
-        self.human_size_label = QLabel("-")
-        self.actions_bar_chart_view.initialize_actions_chart(self.app_cfg.inference.action_list)
+        self.frame_nr_label = QLabel("Frame -")
+        self.fps_label = QLabel("- FPS")
+        self.persons_label = QLabel("0 persons")
+        self.selection_label = QLabel("no selection")
+        pipeline = getattr(worker, "pipeline", None)
+        action_thresh = pipeline.cfg.action_thresh if pipeline is not None else None
+        self.actions_bar_chart_view.initialize_actions_chart(self.app_cfg.inference.action_list, action_thresh)
+        self.init_layout()
 
         self.init_menu(app)
         self.init_status_bar()
@@ -144,18 +145,29 @@ class PedRecApp(QMainWindow):
             self.worker.resume()
         self.play = not self.play
 
+    def init_layout(self):
+        # image and 3D pose on top (larger), EHPI / actions / orientation below
+        self.grid.setRowStretch(1, 3)
+        self.grid.setRowStretch(3, 2)
+        for column in range(3):
+            self.grid.setColumnStretch(column, 1)
+        self.grid.setContentsMargins(4, 4, 4, 4)
+        self.img_ehpi.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.toolBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.img_ehpi.setMinimumSize(1, 1)
+
     def init_status_bar(self):
         self.statusBar().addWidget(self.frame_nr_label)
         self.statusBar().addWidget(self.fps_label)
-        self.statusBar().addWidget(self.human_score_label)
-        self.statusBar().addWidget(self.human_size_label)
-        self.statusBar().addWidget(self.actions_label)
+        self.statusBar().addWidget(self.persons_label)
+        self.statusBar().addWidget(self.selection_label)
 
     def init_img_view(self, img_size):
         self.dialog = QDialog()
         self.hlayout = QHBoxLayout()
         self.img_view.img_size = img_size
         self.img_view.cfg = self.cfg
+        self.img_view.action_list = self.app_cfg.inference.action_list
         self.img_view.human_selected.connect(self.set_selected_human_uid)
 
         # show img in seperat window
@@ -172,28 +184,23 @@ class PedRecApp(QMainWindow):
     def __update_ehpi(self, ehpi: np.ndarray):
         if ehpi is None:
             return
-        # ehpi = np.transpose(np.copy(ehpi_normalized), (1, 0, 2))
-        # ehpi *= 255
-        # ehpi = ehpi.astype(np.uint8)
-        ehpi = cv2.resize(ehpi, (640, 320), interpolation=cv2.INTER_NEAREST)
-        # ehpi = cv2.cvtColor(ehpi, cv2.COLOR_BGR2RGB)
+        ehpi = np.ascontiguousarray(ehpi)
         h, w, ch = ehpi.shape
-        bytes_per_line = ch * w
-        qt_img = QImage(ehpi.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        self.img_ehpi.setPixmap(QPixmap.fromImage(qt_img))
+        qt_img = QImage(ehpi.data, w, h, ch * w, QImage.Format.Format_RGB888)
+        # pixel exact (nearest neighbour) scaling to the available space, aspect ratio kept
+        pixmap = QPixmap.fromImage(qt_img).scaled(self.img_ehpi.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                                  Qt.TransformationMode.FastTransformation)
+        self.img_ehpi.setPixmap(pixmap)
 
     def __clear_ehpi(self):
-        ehpi = np.zeros((320, 640, 3), dtype=np.uint8)
-        h, w, ch = ehpi.shape
-        bytes_per_line = ch * w
-        qt_img = QImage(ehpi.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        self.img_ehpi.setPixmap(QPixmap.fromImage(qt_img))
+        self.img_ehpi.clear()
+        self.img_ehpi.setText("no selection")
 
     # Event Handler
     @Slot(int, np.ndarray, list, np.ndarray, int)
     def update_worker_data(self, frame_nr: int, img: np.ndarray, humans: List[Human], object_bbs: np.ndarray, fps: int):
         # frame nr label:
-        self.frame_nr_label.setText(f"Frame: {frame_nr:05}")
+        self.frame_nr_label.setText(f"Frame {frame_nr:05}")
         self.humans = humans
 
         # img_view
@@ -207,8 +214,8 @@ class PedRecApp(QMainWindow):
         # Skeleton 2.5d
         self.update_selected_human()
 
-        # fps_label
-        self.fps_label.setText(f"FPS: {fps:03}")
+        self.fps_label.setText(f"{fps} FPS")
+        self.persons_label.setText(f"{len(humans)} person{'s' if len(humans) != 1 else ''}")
         self.worker.frame_consumed()
 
     @Slot(int)
@@ -220,11 +227,8 @@ class PedRecApp(QMainWindow):
     def __clear_selected_human(self):
         self.__clear_ehpi()
         self.body_orientation_view.clear()
-        self.human_score_label.setText("Score: -%")
-        self.human_size_label.setText("Size: -mm")
-        self.actions_label.setText("Actions: -")
+        self.selection_label.setText("no selection")
         self.actions_bar_chart_view.clear_data()
-        # self.human_score_label.setText("-")
 
     def update_selected_human(self):
         self.skeleton_view.clear()
@@ -240,13 +244,13 @@ class PedRecApp(QMainWindow):
         self.__update_metadata(selected_human)
         self.__update_skeleton_3d(selected_human)
         self.__update_orientation(selected_human)
-        self.actions_bar_chart_view.set_actions(selected_human.action_probabilities)
+        self.actions_bar_chart_view.set_actions(selected_human.action_probabilities, selected_human.actions)
 
     def __update_metadata(self, selected_human: Human):
-        self.human_score_label.setText(f"Score: {int(selected_human.score * 100):03}%")
-        self.actions_label.setText(f"Actions: {', '.join([a.name for a in selected_human.actions])}")
         size = get_human_size_from_skeleton_3d(selected_human.skeleton_3d)
-        self.human_size_label.setText(f"Size: {int(size)}mm" if size > 0 else "Size: -mm")
+        size_text = f"{int(size)} mm" if size > 0 else "- mm"
+        self.selection_label.setText(f"selected #{selected_human.uid} · score {int(selected_human.score * 100)}% · "
+                                     f"size {size_text}")
 
     def __update_skeleton_3d(self, selected_human: Human):
         skeleton = selected_human.skeleton_3d.copy()
