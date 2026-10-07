@@ -302,6 +302,20 @@ class PedRecPipeline:
         buffer_size = max(app_cfg.inference.buffer_size, self.history_stride * cfg.temporal_field.width)
         self.image_content_buffer = ImageContentBuffer(buffer_size=buffer_size)
 
+    def reset(self):
+        """Forgets the temporal state (tracks, smoothing, action history), e.g. after a jump in a video."""
+        if self.byte_tracker is not None:
+            next_uid = self.byte_tracker.next_uid  # keep the ids unique over the whole video
+            self.byte_tracker.reset()
+            self.byte_tracker.next_uid = next_uid
+        if self.legacy_tracker is not None:
+            next_uid = self.legacy_merger.next_human_uid
+            self.legacy_tracker = HumanTracker(img_size=self.img_size)
+            self.legacy_merger = HumanMerger(self.img_size)
+            self.legacy_merger.next_human_uid = next_uid
+        self.smoothers.clear()
+        self.image_content_buffer = ImageContentBuffer(buffer_size=self.image_content_buffer.buffer_size)
+
     # ------------------------------------------------------------------------------------------------------ stages
     def detect(self, frame: Optional[torch.Tensor], tracked_humans: List[Human]):
         """Returns (human bbs, other object bbs) in image coordinates."""

@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 from qtpy.QtCore import Slot, Qt
-from qtpy.QtGui import QImage, QPixmap
+from qtpy.QtGui import QImage, QPixmap, QKeySequence, QShortcut
 from qtpy.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QDialog, QHBoxLayout
 from qtpy import uic
 
@@ -11,6 +11,7 @@ from pedrec.configs.app_config import AppConfig
 from pedrec.models.human import Human
 from pedrec.ui import theme
 from pedrec.ui.models.pedrec_ui_config import PedRecUIConfig
+from pedrec.ui.models.player_bar import PlayerBar
 from pedrec.ui.pedrec_worker import PedRecWorker
 from pedrec.utils.skeleton_helper_3d import get_human_size_from_skeleton_3d
 
@@ -29,10 +30,6 @@ class PedRecApp(QMainWindow):
         self.cfg = PedRecUIConfig()
         self.cfg.load(self.cfg_path)
         self.app_cfg = app_cfg
-        self.play = True
-        self.playback_action = None
-        self.play_icon = self.style().standardIcon(QStyle.SP_MediaPlay)
-        self.pause_icon = self.style().standardIcon(QStyle.SP_MediaPause)
         self.selected_human_uid: int = None
         self.humans: List[Human] = None
         self.worker = worker
@@ -46,6 +43,7 @@ class PedRecApp(QMainWindow):
         self.init_layout()
 
         self.init_menu(app)
+        self.init_player()
         self.init_status_bar()
         self.init_img_view(app_cfg.inference.img_size)
         self.init_buttons()
@@ -73,12 +71,6 @@ class PedRecApp(QMainWindow):
         # show_object_bbs_toggle.triggered.connect(self.toggle_show_objects)
         # settings_menu.addAction(show_object_bbs_toggle)
 
-        # Control actions
-        self.playback_action = QAction(self.pause_icon, '', self)
-        self.playback_action.setShortcut('Space')
-        self.playback_action.setStatusTip('Pause')
-        self.playback_action.triggered.connect(self.toggle_worker_playback)
-        menu_bar.addAction(self.playback_action)
 
     #######################################################################
     ############################ Buttons ##################################
@@ -134,16 +126,16 @@ class PedRecApp(QMainWindow):
         setattr(self.cfg, property_name, active)
         self.cfg.save(self.cfg_path)
 
-    def toggle_worker_playback(self):
-        if self.play:
-            self.playback_action.setStatusTip('Play')
-            self.playback_action.setIcon(self.play_icon)
-            self.worker.pause()
-        else:
-            self.playback_action.setStatusTip('Pause')
-            self.playback_action.setIcon(self.pause_icon)
-            self.worker.resume()
-        self.play = not self.play
+    def init_player(self):
+        # player controls below the video; keyboard: Space play / pause, Left / Right frame by frame while paused
+        # (skip 5 s while playing), Home replay
+        self.player_bar = PlayerBar(self.worker, self)
+        self.verticalLayout_2.addWidget(self.player_bar)
+        for key, slot in ((Qt.Key.Key_Space, self.worker.toggle_play), (Qt.Key.Key_Left, self.player_bar.left),
+                          (Qt.Key.Key_Right, self.player_bar.right), (Qt.Key.Key_Home, self.worker.replay)):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            shortcut.activated.connect(slot)
 
     def init_layout(self):
         # image and 3D pose on top (larger), EHPI / actions / orientation below
@@ -153,7 +145,6 @@ class PedRecApp(QMainWindow):
             self.grid.setColumnStretch(column, 1)
         self.grid.setContentsMargins(4, 4, 4, 4)
         self.img_ehpi.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.toolBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.img_ehpi.setMinimumSize(1, 1)
 
     def init_status_bar(self):

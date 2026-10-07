@@ -39,8 +39,10 @@ class ImageWidget(QLabel):
 
     def set_humans(self, humans: List[Human]):
         self.humans = humans
-        # initial selection: the first recognized human (only signalled when the selection changes)
-        if self.selected_human_uid is None and len(humans) > 0:
+        # select the first human if nothing is selected yet or the selected one is gone (e.g. new track ids after a
+        # jump in the video); a deselection by clicking next to the persons (-1) is kept. Only signalled on changes.
+        if len(humans) > 0 and self.selected_human_uid != -1 and \
+                all(human.uid != self.selected_human_uid for human in humans):
             self.selected_human_uid = self.humans[0].uid
             self.human_selected.emit(self.selected_human_uid)
 
@@ -89,7 +91,7 @@ class ImageWidget(QLabel):
             if self.cfg.show_head_orientation_2d:
                 draw_orientation(painter, human.orientation[1],
                                  human.skeleton_2d[SKELETON_PEDREC_JOINT.nose.value] / self.scale_factor,
-                                 QtGui.QColor(theme.TEXT), radius=12)
+                                 color, radius=12)
         if self.cfg.show_human_bb or self.cfg.show_actions:
             draw_human_labels(painter, bb, human.uid, human.score, self.scale_factor,
                               actions=human.actions if self.cfg.show_actions else None,

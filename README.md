@@ -135,6 +135,11 @@ network can be run on their own.
 | `mise run demo:no-action` | GUI without action recognition |
 | `mise run bench` | Per stage timings and comparison with the original implementation (`--fast`, `--video`, `--random-weights`) |
 
+GUI player controls (below the video): play / pause (`Space`), previous / next frame while paused (`Left` /
+`Right`, while playing they skip 5 s), replay (`Home`), skip back / forward and a seek bar. Processed frames are cached,
+so stepping back, replaying and seeking into the processed part show the same tracked results instantly; after a jump
+into an unprocessed part the tracking starts anew.
+
 Useful options (see `python pedrec/demo.py --help`):
 - components: `--no-detector`, `--no-pose`, `--no-tracking`, `--no-action`, `--action-list c01|c01_real`
 - tracking: `--tracker bytetrack` (default: Kalman filter + two stage IoU association, keeps ids through short
