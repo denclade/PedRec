@@ -2,7 +2,7 @@ from typing import List, Optional
 
 import numpy as np
 from qtpy import QtGui
-from qtpy.QtCore import Qt, Signal, QPointF
+from qtpy.QtCore import Qt, Signal, QPointF, QRectF
 from qtpy.QtWidgets import QLabel, QWidget
 
 from pedrec.models.constants.action_mappings import ACTION
@@ -36,6 +36,7 @@ class ImageWidget(QLabel):
         self.cfg: PedRecUIConfig = None
         self._scaled_key = None
         self._scaled_pixmap = None
+        self.zoom_view = None  # magnifier (pedrec.ui.models.zoom_view), set by PedRecApp
 
     def set_humans(self, humans: List[Human]):
         self.humans = humans
@@ -64,7 +65,10 @@ class ImageWidget(QLabel):
         with QtGui.QPainter(self) as painter:
             painter.fillRect(self.rect(), QtGui.QColor(theme.PANEL))
             scaled = self._scaled(pixmap)
-            self.offset = QPointF((self.width() - scaled.width()) / 2, (self.height() - scaled.height()) / 2)
+            # next to the docked magnifier the video is left aligned, otherwise centered
+            docked = self._zoom_docked()
+            x_offset = 0 if docked else (self.width() - scaled.width()) / 2
+            self.offset = QPointF(x_offset, (self.height() - scaled.height()) / 2)
             self.scale_factor = self.img_size.width / scaled.width()
             painter.translate(self.offset)
             painter.drawPixmap(0, 0, scaled)
@@ -73,6 +77,42 @@ class ImageWidget(QLabel):
                     draw_object(painter, object_bb, self.scale_factor)
             for human in self.humans:
                 self._draw_human(painter, human)
+            self._draw_magnified_region(painter, docked)
+
+    def _zoom_docked(self) -> bool:
+        return self.zoom_view is not None and self.zoom_view.isVisible() and \
+            self.zoom_view.window() is self.window()
+
+    def _draw_magnified_region(self, painter: QtGui.QPainter, docked: bool):
+        """Marks the region shown in the magnifier and connects it with the docked magnifier (inset style)."""
+        zoom = self.zoom_view
+        if zoom is None or zoom.region is None or zoom.frame is None:
+            return
+        color = QtGui.QColor(zoom.color)
+        region = QRectF(zoom.region.x() / self.scale_factor, zoom.region.y() / self.scale_factor,
+                        zoom.region.width() / self.scale_factor, zoom.region.height() / self.scale_factor)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        if docked:
+            lens = zoom.lens_rect()
+            top = self.mapFromGlobal(zoom.mapToGlobal(lens.topRight().toPoint()))
+            bottom = self.mapFromGlobal(zoom.mapToGlobal(lens.bottomRight().toPoint()))
+            edge = -self.offset.x()
+            top_y, bottom_y = top.y() - self.offset.y(), bottom.y() - self.offset.y()
+            funnel = QtGui.QPolygonF([QPointF(edge, top_y), region.topLeft(), region.bottomLeft(),
+                                      QPointF(edge, bottom_y)])
+            fill = QtGui.QColor(color)
+            fill.setAlpha(28)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QBrush(fill))
+            painter.drawPolygon(funnel)
+            line = QtGui.QColor(color)
+            line.setAlpha(140)
+            painter.setPen(QtGui.QPen(line, 1))
+            painter.drawLine(QPointF(edge, top_y), region.topLeft())
+            painter.drawLine(QPointF(edge, bottom_y), region.bottomLeft())
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QtGui.QPen(color, 1.5, Qt.PenStyle.DashLine))
+        painter.drawRoundedRect(region, 6, 6)
 
     def _draw_human(self, painter: QtGui.QPainter, human: Human):
         selected = self.selected_human_uid is not None and self.selected_human_uid == human.uid

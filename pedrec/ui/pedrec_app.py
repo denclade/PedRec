@@ -4,7 +4,7 @@ from typing import List
 import numpy as np
 from qtpy.QtCore import Slot, Qt
 from qtpy.QtGui import QImage, QPixmap, QKeySequence, QShortcut
-from qtpy.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QDialog, QHBoxLayout
+from qtpy.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QDialog, QHBoxLayout, QVBoxLayout
 from qtpy import uic
 
 from pedrec.configs.app_config import AppConfig
@@ -12,7 +12,9 @@ from pedrec.models.human import Human
 from pedrec.ui import theme
 from pedrec.ui.models.pedrec_ui_config import PedRecUIConfig
 from pedrec.ui.models.player_bar import PlayerBar
+from pedrec.ui.models.zoom_view import ZoomView, ZoomWindow
 from pedrec.ui.pedrec_worker import PedRecWorker
+from pedrec.utils.bb_helper import get_human_bb_from_joints
 from pedrec.utils.skeleton_helper_3d import get_human_size_from_skeleton_3d
 
 # Load icons
@@ -146,6 +148,40 @@ class PedRecApp(QMainWindow):
         self.grid.setContentsMargins(4, 4, 4, 4)
         self.img_ehpi.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img_ehpi.setMinimumSize(1, 1)
+        # magnifier of the selected person left of the video (can be popped out into an own window)
+        self.zoom_view = ZoomView(self)
+        self.zoom_view.pop_out_toggled.connect(self.toggle_zoom_window)
+        self.zoom_window = None
+        self.verticalLayout_2.removeWidget(self.img_view)
+        self.video_row = QHBoxLayout()
+        self.video_row.setSpacing(6)
+        self.video_row.addWidget(self.zoom_view, 1)
+        self.video_row.addWidget(self.img_view, 4)
+        self.verticalLayout_2.insertLayout(0, self.video_row)
+        self.img_view.zoom_view = self.zoom_view
+
+    def toggle_zoom_window(self):
+        if self.zoom_window is not None:
+            self.zoom_window.close()  # docks the magnifier again (closed signal)
+            return
+        self.zoom_window = ZoomWindow()
+        layout = QVBoxLayout(self.zoom_window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.video_row.removeWidget(self.zoom_view)
+        layout.addWidget(self.zoom_view)
+        self.zoom_window.closed.connect(self.dock_zoom_view)
+        self.zoom_window.show()
+        self.img_view.update()
+
+    def dock_zoom_view(self):
+        if self.zoom_window is None:
+            return
+        window, self.zoom_window = self.zoom_window, None
+        window.layout().removeWidget(self.zoom_view)
+        self.video_row.insertWidget(0, self.zoom_view, 1)
+        self.zoom_view.show()
+        window.deleteLater()
+        self.img_view.update()
 
     def init_status_bar(self):
         self.statusBar().addWidget(self.frame_nr_label)
@@ -220,6 +256,7 @@ class PedRecApp(QMainWindow):
         self.body_orientation_view.clear()
         self.selection_label.setText("no selection")
         self.actions_bar_chart_view.clear_data()
+        self.zoom_view.clear()
 
     def update_selected_human(self):
         self.skeleton_view.clear()
@@ -236,6 +273,9 @@ class PedRecApp(QMainWindow):
         self.__update_skeleton_3d(selected_human)
         self.__update_orientation(selected_human)
         self.actions_bar_chart_view.set_actions(selected_human.action_probabilities, selected_human.actions)
+        img_size = self.app_cfg.inference.img_size
+        bb = get_human_bb_from_joints(selected_human.skeleton_2d, max_x_val=img_size.width, max_y_val=img_size.height)
+        self.zoom_view.set_person(self.img_view.pixmap(), bb, selected_human.uid)
 
     def __update_metadata(self, selected_human: Human):
         size = get_human_size_from_skeleton_3d(selected_human.skeleton_3d)
