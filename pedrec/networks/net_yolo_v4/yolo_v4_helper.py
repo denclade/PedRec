@@ -88,7 +88,6 @@ def get_yolo_v4_zero_img(cfg: YoloV4Config, device: torch.device):
         exit(-1)
 
     img = img.to(device)
-    img = torch.autograd.Variable(img)
     return img
 
 
@@ -111,7 +110,6 @@ def do_detect(model: YoloV4,
         exit(-1)
 
     img = img.to(device)
-    img = torch.autograd.Variable(img)
 
     t1 = time.time()
 

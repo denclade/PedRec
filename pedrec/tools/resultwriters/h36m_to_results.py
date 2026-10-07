@@ -1,16 +1,20 @@
-import os
 import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
+import os
 from pathlib import Path
 
 from pedrec.datasets.pedrec_dataset import PedRecDataset
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
 
-sys.path.append(".")
 
 from torch.utils.data import DataLoader
 
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.pedrec_stages import STAGES
 from pedrec.configs.dataset_configs import get_h36m_val_dataset_cfg_default
 from pedrec.evaluations.eval_helper import get_total_coords
 from pedrec.models.constants.dataset_constants import DatasetType
@@ -161,23 +165,24 @@ def main(output_dir: str, output_postfix: str, net_cfg, h36m_val, weights_path: 
     df_gt.to_pickle(output_path)
 
 
-if __name__ == '__main__':
-    experiment_paths = get_experiment_paths_home()
-    network_paths = [
-        # experiment_paths.pose_2d_coco_only_weights_path,
-        # experiment_paths.pedrec_2d_h36m_path,
-        # experiment_paths.pedrec_2d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_path,
-        # experiment_paths.pedrec_2d3d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_path,
-        # experiment_paths.pedrec_2d3d_c_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_mebow_path,
-        # experiment_paths.pedrec_2d3d_c_o_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_mebow_path
-    ]
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Writes PedRecNet predictions on the Human3.6m validation set as "
+                                                 "result dataframes for evaluations/h36m_eval_export.py.")
+    parser.add_argument("--experiments", nargs="+", default=DEFAULT_EXPERIMENTS, choices=sorted(STAGES.keys()),
+                        metavar="STAGE", help="Training stages (checkpoints) to run.")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--no-flipped", action="store_true", help="Skip the flipped (flip test) run.")
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    network_paths = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
+    output_dir = os.path.dirname(os.path.normpath(experiment_paths.h36m_val_dir))
     net_cfg = PedRecNet50Config()
 
     trans = transforms.Compose([
@@ -203,22 +208,18 @@ if __name__ == '__main__':
 
     for net_path in network_paths:
         print(f"Working on {net_path}")
-        main(output_dir="data/datasets/Human3.6m/",
+        main(output_dir=output_dir,
              output_postfix=Path(net_path).stem,
              net_cfg=net_cfg,
              h36m_val=h36m_val,
              weights_path=net_path)
-        main(output_dir="data/datasets/Human3.6m/",
-             output_postfix=f"{Path(net_path).stem}_flipped",
-             net_cfg=net_cfg,
-             h36m_val=h36m_val_flipped,
-             weights_path=net_path)
-
-    #
-    # h36m_val = PedRecDataset(experiment_paths.h36m_train_dir,
-    #                          experiment_paths.h36m_train_filename,
-    #                          DatasetType.VALIDATE, h36m_val_dataset_cfg,
-    #                          net_cfg.model.input_size, trans)
-    # main(output_dir="data/datasets/Human3.6m/", output_postfix="train_direct_4", net_cfg=net_cfg, h36m_val=h36m_val)
+        if not args.no_flipped:
+            main(output_dir=output_dir,
+                 output_postfix=f"{Path(net_path).stem}_flipped",
+                 net_cfg=net_cfg,
+                 h36m_val=h36m_val_flipped,
+                 weights_path=net_path)
 
 
+if __name__ == '__main__':
+    cli()

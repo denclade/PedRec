@@ -30,30 +30,20 @@ class VideoProvider(InputProviderBase):
 
     def get_data(self) -> np.ndarray:
         assert self.cap.isOpened(), 'Cannot capture source'
-
         while self.cap.isOpened():
             ret, frame = self.cap.read()
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            if not ret:
+            if not ret or frame is None:
                 break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if self.first_frame:
-                if frame.shape[0] == self.image_size.width and frame.shape[1] == self.image_size.height:
+                if frame.shape[1] == self.image_size.width and frame.shape[0] == self.image_size.height:
                     self.requires_resize = False
-                    self.first_frame = False
+                self.first_frame = False
             if self.requires_resize:
                 frame = cv2.resize(frame, (self.image_size.width, self.image_size.height))
             if self.mirror:
                 frame = cv2.flip(frame, 1)
-            if ret:
-                yield frame
-
-                # key = cv2.waitKey(1)
-                # if key & 0xFF == ord('q'):
-                #     return None
-
-            else:
-                return None
-
+            yield frame
         self.cap.release()
 
     def stop(self):

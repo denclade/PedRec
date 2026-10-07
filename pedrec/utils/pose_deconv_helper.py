@@ -88,7 +88,7 @@ def pedrec_recognizer(pose_model: Union[torch.nn.Module],
     centers = []
     scales = []
     for bb in bbs:
-        assert bb != [] and get_bb_class_idx(bb) == 0
+        assert len(bb) > 0 and get_bb_class_idx(bb) == 0
         center, scale = bb_to_center_scale(bb, cfg.model.input_size)
         centers.append(center)
         scales.append(scale)

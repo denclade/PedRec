@@ -1,6 +1,6 @@
 import numpy as np
 import pyqtgraph.opengl as gl
-from pyqtgraph.Qt import QtGui
+from qtpy import QtGui
 
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT
 from pedrec.models.data_structures import Color

@@ -28,8 +28,8 @@ def get_device(use_gpu: bool = True):
 
 def set_fixed_seeds(seed: int):
     random.seed(seed)
-    # np.random.seed(seed)
-    torch.manual_seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)  # also seeds all CUDA devices
 
 
 def affine_transform_coords_2d(pose_coords_2d, trans_inv, device: torch.device):

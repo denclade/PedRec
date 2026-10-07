@@ -3,6 +3,7 @@ import sys
 sys.path.append(".")
 import numpy as np
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 
@@ -61,7 +62,7 @@ if __name__ == "__main__":
     h36m_train_path = "data/datasets/Human3.6M/train/h36m_train.pkl"
     h36m_val_path = "data/datasets/Human3.6M/val/h36m_val.pkl"
     
-    pd.to_pickle(run_sim(pd.read_pickle(sim_train_path)), sim_train_path)
-    pd.to_pickle(run_sim(pd.read_pickle(sim_val_path)), sim_val_path)
-    pd.to_pickle(run_h36m(pd.read_pickle(h36m_train_path)), h36m_train_path)
-    pd.to_pickle(run_h36m(pd.read_pickle(h36m_val_path)), h36m_val_path)
+    pd.to_pickle(run_sim(read_pedrec_df(sim_train_path)), sim_train_path)
+    pd.to_pickle(run_sim(read_pedrec_df(sim_val_path)), sim_val_path)
+    pd.to_pickle(run_h36m(read_pedrec_df(h36m_train_path)), h36m_train_path)
+    pd.to_pickle(run_h36m(read_pedrec_df(h36m_val_path)), h36m_val_path)

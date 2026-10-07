@@ -39,12 +39,8 @@ def joint_has_value(joint: np.ndarray) -> float:
     return joint[0] > 0 or joint[1] > 0
 
 
-def get_skeleton_mean_score(skeleton: np.ndarray):
-    confidence = 0.0
-    for joint in skeleton:
-        confidence += get_joint_score(joint)
-    confidence /= skeleton.shape[0]
-    return confidence
+def get_skeleton_mean_score(skeleton: np.ndarray) -> float:
+    return float(np.sum(skeleton[:, 2], dtype=np.float64) / skeleton.shape[0])
 
 
 def get_euclidean_distance_joint(joint_a: np.ndarray, joint_b: np.ndarray) -> float:

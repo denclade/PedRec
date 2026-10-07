@@ -1,12 +1,12 @@
+import os
 import sys
-sys.path.append('.')
 from typing import List
 
 import cv2
 import numpy as np
-from PyQt5.QtCore import pyqtSlot
-from PyQt5.QtGui import QImage, QPixmap, QFontDatabase
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QGroupBox, QDialog, QHBoxLayout
+from qtpy.QtCore import Slot
+from qtpy.QtGui import QImage, QPixmap, QFontDatabase
+from qtpy.QtWidgets import QApplication, QMainWindow, QLabel, QAction, QStyle, QGroupBox, QDialog, QHBoxLayout
 from qtpy import uic, QtCore
 
 from pedrec.configs.app_config import AppConfig
@@ -16,17 +16,17 @@ from pedrec.ui.pedrec_worker import PedRecWorker
 from pedrec.utils.skeleton_helper_3d import get_human_size_from_skeleton_3d
 
 # Load icons
-import pedrec.ui.qt_icon_resources
+import pedrec.ui.qt_icon_resources  # noqa: F401
+
+UI_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class PedRecApp(QMainWindow):
     def __init__(self, app: QApplication, worker: PedRecWorker, app_cfg: AppConfig):
         super().__init__()
         app.setStyle('Breeze')
-        QFontDatabase().addApplicationFont("./emojione-android.ttf")
-        print(sys.path)
-        uic.loadUi("pedrec/ui/mainwindow.ui", self)
-        self.cfg_path = "pedrec/ui/.ui_cfg.pkl"
+        uic.loadUi(os.path.join(UI_DIR, "mainwindow.ui"), self)
+        self.cfg_path = os.path.join(UI_DIR, ".ui_cfg.pkl")
         self.cfg = PedRecUIConfig()
         self.cfg.load(self.cfg_path)
         self.app_cfg = app_cfg
@@ -130,7 +130,6 @@ class PedRecApp(QMainWindow):
     # Button Actions
 
     def toggle_button(self, property_name: str, active: bool):
-        print(f"{property_name}: {active}")
         setattr(self.cfg, property_name, active)
         self.cfg.save(self.cfg_path)
 
@@ -191,7 +190,7 @@ class PedRecApp(QMainWindow):
         self.img_ehpi.setPixmap(QPixmap.fromImage(qt_img))
 
     # Event Handler
-    @pyqtSlot(int, np.ndarray, list, np.ndarray, int)
+    @Slot(int, np.ndarray, list, np.ndarray, int)
     def update_worker_data(self, frame_nr: int, img: np.ndarray, humans: List[Human], object_bbs: np.ndarray, fps: int):
         # frame nr label:
         self.frame_nr_label.setText(f"Frame: {frame_nr:05}")
@@ -211,7 +210,7 @@ class PedRecApp(QMainWindow):
         # fps_label
         self.fps_label.setText(f"FPS: {fps:03}")
 
-    @pyqtSlot(int)
+    @Slot(int)
     def set_selected_human_uid(self, selected_human_uid: int):
         self.selected_human_uid = selected_human_uid
         self.update_selected_human()

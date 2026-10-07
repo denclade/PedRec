@@ -1,11 +1,14 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
 import math
 import os
 
+from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.networks.net_pedrec.pose_resnet import PoseResNet
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
-import sys
 
-sys.path.append(".")
 import cv2
 from torch.utils.data import DataLoader
 
@@ -192,7 +195,7 @@ def get_column_names():
 
 
 def initialize_pose_resnet(net, pose_resnet_weights_path: str):
-    pose_resnet_state_dict = torch.load(pose_resnet_weights_path)
+    pose_resnet_state_dict = load_state_dict_file(pose_resnet_weights_path)
     net_weights = net.state_dict()
     for name, param in pose_resnet_state_dict.items():
         if name.startswith("final"):

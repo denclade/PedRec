@@ -112,3 +112,12 @@ logs/
 *.npy
 .ui_cfg.pkl
 .ipynb_checkpoints/
+# mise / local environment
+.venv/
+mise.local.toml
+.mise.local.toml
+.mise.toml
+
+# generated evaluation / demo output
+coco_out*.json
+out/

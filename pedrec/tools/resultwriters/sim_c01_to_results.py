@@ -1,11 +1,16 @@
 import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
+import os
 from pathlib import Path
 
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.pedrec_stages import STAGES
 
-sys.path.append(".")
 
 from torch.utils.data import DataLoader
 
@@ -205,48 +210,41 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
     df.to_pickle(output_path.replace("pred", "gt"))
     print("saved gt")
 
-if __name__ == '__main__':
-    # pedrec_dataset_dir = "data/datasets/Human3.6m/val/"
-    # pedrec_dataset_filename = "h36m_val_pedrec.pkl"
-    # pedrec_dataset_output_filename = "data/datasets/Human3.6m/val/h36m_val_v5_pose_results.pkl"
-    # cfg = get_h36m_dataset_cfg_default()
-    # cfg.subsample = 1
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
 
-    # pedrec_dataset_dir = "data/datasets/Conti01/"
-    # pedrec_dataset_filename = "rt_conti_01_train.pkl"
-    # pedrec_dataset_output_filename = "data/datasets/Conti01/RESULTS-SIM-C01-TRAIN_pedrec_p2d3d_c_o_h36m_sim_mebow_0.pkl"
-    # cfg = get_sim_dataset_cfg_default()
-    # cfg.subsample = 1
-    # main(pedrec_dataset_output_filename, cfg, pedrec_dataset_dir, pedrec_dataset_filename)
 
-    experiment_paths = get_experiment_paths_home()
-    network_paths = [
-        # experiment_paths.pose_2d_coco_only_weights_path,
-        # experiment_paths.pedrec_2d_h36m_path,
-        # experiment_paths.pedrec_2d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_path,
-        # experiment_paths.pedrec_2d3d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_sim_path,
-        # experiment_paths.pedrec_2d_c_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_path,
-        # experiment_paths.pedrec_2d3d_c_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_mebow_path,
-        # experiment_paths.pedrec_2d3d_c_o_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_mebow_path,
-    ]
-    pedrec_dataset_dir = "data/datasets/Conti01/"
-    pedrec_dataset_filename = "rt_conti_01_train_FIN.pkl"
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Writes PedRecNet predictions on the SIM-C01 dataset as result "
+                                                 "dataframes (<sim-c01-dir>/results). The train split results are the "
+                                                 "input of the EHPI3D training, the val split results of the evaluation.")
+    parser.add_argument("--experiments", nargs="+", default=DEFAULT_EXPERIMENTS, choices=sorted(STAGES.keys()),
+                        metavar="STAGE", help="Training stages (checkpoints) to run.")
+    parser.add_argument("--split", choices=["train", "val"], default="train")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--flipped", action="store_true", help="Run on flipped images (flip test).")
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    network_paths = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
+    if args.split == "train":
+        pedrec_dataset_dir = experiment_paths.sim_c01_dir
+        pedrec_dataset_filename = experiment_paths.sim_c01_filename
+        prefix = "C01F_train_pred_df"
+    else:
+        pedrec_dataset_dir = experiment_paths.sim_c01_val_dir
+        pedrec_dataset_filename = experiment_paths.sim_c01_val_filename
+        prefix = "C01F_pred_df"
     cfg = get_sim_dataset_cfg_default()
     cfg.subsample = 1
     for net_path in network_paths:
         experiment_name = Path(net_path).stem
-        pedrec_dataset_output_filename = f"data/datasets/Conti01/results/C01F_train_pred_df_{experiment_name}.pkl"
-        main(pedrec_dataset_output_filename, cfg, pedrec_dataset_dir, pedrec_dataset_filename, net_path, False)
-
-        # pedrec_dataset_output_filename = f"data/datasets/Conti01/results/C01F_train_pred_df_{experiment_name}_flipped.pkl"
-        # main(pedrec_dataset_output_filename, cfg, pedrec_dataset_dir, pedrec_dataset_filename, net_path, True)
+        postfix = "_flipped" if args.flipped else ""
+        output_path = os.path.join(pedrec_dataset_dir, "results", f"{prefix}_{experiment_name}{postfix}.pkl")
+        main(output_path, cfg, pedrec_dataset_dir, pedrec_dataset_filename, net_path, args.flipped)
 
 
-
+if __name__ == '__main__':
+    cli()

@@ -1,6 +1,10 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
 import math
 import os
-import sys
 from pathlib import Path
 
 from pedrec.evaluations.eval_helper import get_skel_coco, get_skel_h36m, get_skel_h36m_handfootends
@@ -10,20 +14,24 @@ from pedrec.models.constants.skeleton_coco import SKELETON_COCO_JOINTS
 from pedrec.models.constants.skeleton_h36m import SKELETON_H36M_JOINTS
 from pedrec.models.constants.skeletons import SKELETON
 from pedrec.models.validation.orientation_validation_results import FullOrientationValidationResult
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.pedrec_stages import STAGES
 from pedrec.utils.skeleton_helper import flip_lr_joints
 from pedrec.utils.skeleton_helper_3d import flip_lr_joints_3d, flip_lr_orientation
 
-print(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import numpy as np
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
+
+
+sim_c01_root = "data/datasets/Conti01"  # set by main()
+sim_c01_val_filename = "rt_conti_01_val_FIN.pkl"
 
 
 def get_df(dataset_root, result_filename):
     dataset_df_path = os.path.join(dataset_root, "results", result_filename)
-    return pd.read_pickle(dataset_df_path)
+    return read_pedrec_df(dataset_df_path)
 
 
 def get_skeleton2d(df):
@@ -60,13 +68,14 @@ def get_msjpe(output, target):
 
 
 def get_results(experiment_name: str, flip_test: bool = False, skeleton: SKELETON = SKELETON.PEDREC):
-    df_full_gt = pd.read_pickle("data/datasets/Conti01/rt_conti_01_val_FIN.pkl")
+    df_full_gt = read_pedrec_df(os.path.join(sim_c01_root, sim_c01_val_filename))
     skeleton2d_visibles = [col for col in df_full_gt if col.startswith('skeleton2d') and col.endswith('_visible')]
     df_full_gt["visible_joints"] = df_full_gt[skeleton2d_visibles].sum(axis=1)
     df_valid_filter = (df_full_gt['bb_score'] >= 1) & (df_full_gt['visible_joints'] >= 3)
     df_full_gt = df_full_gt[df_valid_filter]
-    df_gt = get_df("data/datasets/Conti01", f"C01F_gt_df_{experiment_name}.pkl")
-    df = get_df("data/datasets/Conti01", f"C01F_pred_df_{experiment_name}.pkl")
+    df_gt = get_df(sim_c01_root, f"C01F_gt_df_{experiment_name}.pkl")
+    df = get_df(sim_c01_root, f"C01F_pred_df_{experiment_name}.pkl")
+    df_flipped = get_df(sim_c01_root, f"C01F_pred_df_{experiment_name}_flipped.pkl") if flip_test else None
     # df_flipped = get_df("data/datasets/Conti01", f"C01_pred_df_{experiment_name}_flipped.pkl")
 
     _, skeleton_3d_full_gt = get_skeleton3d(df_full_gt)
@@ -183,23 +192,25 @@ def get_results(experiment_name: str, flip_test: bool = False, skeleton: SKELETO
     return msjpe, pck_results, o_body_results, o_head_results
 
 
-if __name__ == "__main__":
-    experiment_paths = get_experiment_paths_home()
-    experiments = [
-        # experiment_paths.pose_2d_coco_only_weights_path,
-        # experiment_paths.pedrec_2d_h36m_path,
-        # experiment_paths.pedrec_2d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_path,
-        # experiment_paths.pedrec_2d3d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_path,
-        # experiment_paths.pedrec_2d3d_c_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_mebow_path,
-        # experiment_paths.pedrec_2d3d_c_o_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_mebow_path
-    ]
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="SIM-C01 MSJPE / PCK / orientation tables from the result dataframes "
+                                                 "written by tools/resultwriters/sim_c01_to_results.py.")
+    parser.add_argument("--experiments", nargs="+", default=DEFAULT_EXPERIMENTS, choices=sorted(STAGES.keys()),
+                        metavar="STAGE", help="Training stages to evaluate.")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    global sim_c01_root, sim_c01_val_filename
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    sim_c01_root = experiment_paths.sim_c01_val_dir
+    sim_c01_val_filename = experiment_paths.sim_c01_val_filename
+    experiments = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
 
     latex_overview = [
         "Experiment & Avg \\\\\\midrule"]
@@ -281,3 +292,5 @@ if __name__ == "__main__":
         print(text)
 
 
+if __name__ == "__main__":
+    main()

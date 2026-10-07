@@ -1,8 +1,8 @@
 import math
 
 import numpy as np
-from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPen, QPainter, QColor, QPolygonF, QBrush
+from qtpy.QtCore import Qt, QPointF
+from qtpy.QtGui import QPen, QPainter, QColor, QPolygonF, QBrush
 
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_LIMB_COLORS, SKELETON_PEDREC, SKELETON_PEDREC_JOINT_COLORS
 from pedrec.utils.skeleton_helper import get_joint_score

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from torch import nn
@@ -42,7 +42,7 @@ class PedRecNetTrainConfig:
 @dataclass
 class PedRecNetConfig:
     layer: PedRecNetLayerConfig
-    model: PedRecNetModelConfig = PedRecNetModelConfig(
+    model: PedRecNetModelConfig = field(default_factory=lambda: PedRecNetModelConfig(
         input_size=ImageSize(width=192, height=256),
         heatmap_size=ImageSize(width=48, height=64),
         num_joints=len(SKELETON_PEDREC_JOINTS),
@@ -54,15 +54,15 @@ class PedRecNetConfig:
         num_pose_3d_deconv_layers=3,
         num_pose_3d_deconv_filters=[256, 256, 256],
         num_pose_3d_deconv_kernels=[4, 4, 4]
-    )
+    ))
 
-    train: PedRecNetTrainConfig = PedRecNetTrainConfig(loss_use_target_weight=True)
-    test: PedRecNetTestConfig = PedRecNetTestConfig(post_process=True)
+    train: PedRecNetTrainConfig = field(default_factory=lambda: PedRecNetTrainConfig(loss_use_target_weight=True))
+    test: PedRecNetTestConfig = field(default_factory=lambda: PedRecNetTestConfig(post_process=True))
 
 
 @dataclass
 class PedRecNet50Config(PedRecNetConfig):
-    layer: PedRecNetLayerConfig = PedRecNetLayerConfig(
+    layer: PedRecNetLayerConfig = field(default_factory=lambda: PedRecNetLayerConfig(
         layers=[3, 4, 6, 3],
         block=Bottleneck
-    )
+    ))

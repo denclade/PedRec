@@ -137,26 +137,26 @@ def validate(net: nn.Module, val_loader: DataLoader,
     start = time.time()
     loss_total = 0.0
     net.eval()
-    pose2d_gts = None
-    pose2d_preds = None
-    pose3d_gts = None
-    pose3d_preds = None
-    orientation_gts = None
-    orientation_preds = None
-    env_position_gts = None
-    env_position_preds = None
+    pose2d_gts = []
+    pose2d_preds = []
+    pose3d_gts = []
+    pose3d_preds = []
+    orientation_gts = []
+    orientation_preds = []
+    env_position_gts = []
+    env_position_preds = []
     count = 0
-    with torch.no_grad():
+    with torch.inference_mode():
         for test_data in tqdm(val_loader):
             # if count > 2:
             #     break
             # count += 1
             images, labels = test_data
-            images = images.to(device)
+            images = images.to(device, non_blocking=True)
             labels = move_to_device(labels, device)
             outputs, loss = get_outputs_loss_func(net, images, labels)
             preds = get_preds_func(outputs)
-            loss_total += loss.item()
+            loss_total += float(loss)
 
             # GTs
             pose2d_gt = labels["skeleton"].cpu().detach().numpy()
@@ -173,42 +173,32 @@ def validate(net: nn.Module, val_loader: DataLoader,
             if validate_2D:
                 pose2d_pred = preds["skeleton"]
                 pose2d_pred = get_total_coords(pose2d_pred, model_input_size, centers, scales, rotations)
-                if pose2d_gts is None:
-                    pose2d_gts = pose2d_gt
-                    pose2d_preds = pose2d_pred
-                else:
-                    pose2d_gts = np.concatenate((pose2d_gts, pose2d_gt), 0)
-                    pose2d_preds = np.concatenate((pose2d_preds, pose2d_pred), 0)
+                pose2d_gts.append(pose2d_gt)
+                pose2d_preds.append(pose2d_pred)
             if validate_3D:
                 pose3d_pred = preds["skeleton_3d"]
                 pose3d_pred[:, :, :3] = pose3d_pred[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2)  # to cm
-                if pose3d_gts is None:
-                    pose3d_gts = pose3d_gt
-                    pose3d_preds = pose3d_pred
-                else:
-                    pose3d_gts = np.concatenate((pose3d_gts, pose3d_gt), 0)
-                    pose3d_preds = np.concatenate((pose3d_preds, pose3d_pred), 0)
+                pose3d_gts.append(pose3d_gt)
+                pose3d_preds.append(pose3d_pred)
 
             if validate_orientation:
                 orientation_pred = preds["orientation"]
-                if orientation_gts is None:
-                    orientation_gts = orientation_gt
-                    orientation_preds = orientation_pred
-                else:
-                    orientation_gts = np.concatenate((orientation_gts, orientation_gt), 0)
-                    orientation_preds = np.concatenate((orientation_preds, orientation_pred), 0)
+                orientation_gts.append(orientation_gt)
+                orientation_preds.append(orientation_pred)
 
             if validate_env_position:
                 env_position_gt = labels["env_position_2d"].cpu().detach().numpy()
                 env_position_pred = preds["env_position"]
 
-                if env_position_gts is None:
-                    env_position_gts = env_position_gt
-                    env_position_preds = env_position_pred
-                else:
-                    env_position_gts = np.concatenate((env_position_gts, env_position_gt), 0)
-                    env_position_preds = np.concatenate((env_position_preds, env_position_pred), 0)
+                env_position_gts.append(env_position_gt)
+                env_position_preds.append(env_position_pred)
 
+    def stack(arrays):
+        return np.concatenate(arrays, 0) if len(arrays) > 0 else None
+    pose2d_gts, pose2d_preds = stack(pose2d_gts), stack(pose2d_preds)
+    pose3d_gts, pose3d_preds = stack(pose3d_gts), stack(pose3d_preds)
+    orientation_gts, orientation_preds = stack(orientation_gts), stack(orientation_preds)
+    env_position_gts, env_position_preds = stack(env_position_gts), stack(env_position_preds)
     results = ValidationResults(loss=loss_total / len(val_loader), val_duration=time.time() - start)
     # remove foot / hand end
     # pose2d_gts = pose2d_gts[:, :22, :]

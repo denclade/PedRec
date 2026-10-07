@@ -1,8 +1,14 @@
+import os
 from dataclasses import dataclass
 
 
 @dataclass()
 class ExperimentPaths(object):
+    """
+    All dataset / checkpoint locations used by the training and evaluation scripts.
+    Use ``pedrec.training.experiments.experiment_path_helper.get_experiment_paths`` to create an instance
+    based on the data root (``PEDREC_DATA_DIR``).
+    """
     pose_resnet_weights_path: str
     pose_2d_coco_only_weights_path: str
     pedrec_2d_path: str
@@ -39,3 +45,18 @@ class ExperimentPaths(object):
     sim_val_filename: str = "rt_validate_3d.pkl"
     h36m_val_filename: str = "h36m_val_pedrec.pkl"
     h36m_train_filename: str = "h36m_train_pedrec.pkl"
+    ehpi3d_output_dir: str = "data/models/ehpi3d"
+    ehpi_videos_dir: str = "data/videos/ehpi_videos"
+    ehpi_videos_results_filename: str = "pedrec_p2d3d_c_o_h36m_sim_mebow_0_results.pkl"
+
+    def get_stage_checkpoint_path(self, stage_name: str, cycle_num: int = 0, round_suffix: str = None) -> str:
+        """
+        Path of the (MTL wrapper) checkpoint written by ``train_pedrec.py`` for a training stage.
+        """
+        filename = f"experiment_pedrec_{stage_name}_{cycle_num}"
+        if round_suffix is not None:
+            filename += f"_{round_suffix}"
+        return os.path.join(self.output_dir, f"{filename}.pth")
+
+    def get_stage_protocol_path(self, stage_name: str) -> str:
+        return os.path.join(self.output_dir, f"experiment_pedrec_{stage_name}_protocol.md")

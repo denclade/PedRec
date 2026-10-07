@@ -24,7 +24,7 @@ def split_human_bbs(bbs: List[bb_type]) -> Tuple[List[bb_type], List[bb_type]]:
     human_bbs = []
     other_bbs = []
     for bb in bbs:
-        if bb == [] or get_bb_class_idx(bb) != 0:
+        if len(bb) == 0 or get_bb_class_idx(bb) != 0:
             other_bbs.append(bb)
         else:
             human_bbs.append(bb)
@@ -321,40 +321,27 @@ def get_region_boxes(boxes_and_confs: torch.Tensor) -> torch.Tensor:
 
 def get_human_bb_from_joints(joints: np.ndarray, max_x_val: int = sys.maxsize,
                              max_y_val: int = sys.maxsize, confidence: float = 0, class_idx: int = None, expand: float = 0.15):
-    min_x = sys.maxsize
-    min_y = sys.maxsize
-    max_x = 0
-    max_y = 0
-    for joint in joints:
-        x = joint[0]
-        y = joint[1]
-        min_x = min_x if x > min_x else x
-        min_y = min_y if y > min_y else y
-        max_x = max_x if x < max_x else x
-        max_y = max_y if y < max_y else y
+    """
+    Center bb around all joints (x, y in the first two columns), expanded by ``expand`` of the width / height and
+    clipped to the image.
+    """
+    min_x = min(float(np.min(joints[:, 0])), sys.maxsize)
+    min_y = min(float(np.min(joints[:, 1])), sys.maxsize)
+    max_x = max(float(np.max(joints[:, 0])), 0)
+    max_y = max(float(np.max(joints[:, 1])), 0)
 
-    bb_width = max_x - min_x
-    bb_height = max_y - min_y
+    bb_expand_width = expand * (max_x - min_x)
+    bb_expand_height = expand * (max_y - min_y)
 
-    bb_expand_width = expand * bb_width
-    bb_expand_height = expand * bb_height
-
-    min_x = min_x - bb_expand_width
-    min_y = min_y - bb_expand_height
-    max_x = max_x + bb_expand_width
-    max_y = max_y + bb_expand_height
-
-    min_x = min_x if min_x > 0 else 0
-    min_y = min_y if min_y > 0 else 0
-    max_x = max_x if max_x < max_x_val else max_x_val
-    max_y = max_y if max_y < max_y_val else max_y_val
+    min_x = max(min_x - bb_expand_width, 0)
+    min_y = max(min_y - bb_expand_height, 0)
+    max_x = min(max_x + bb_expand_width, max_x_val)
+    max_y = min(max_y + bb_expand_height, max_y_val)
 
     width = max_x - min_x
     height = max_y - min_y
-    center_x = min_x + (width / 2)
-    center_y = min_y + (height / 2)
+    return [min_x + (width / 2), min_y + (height / 2), width, height, confidence, class_idx]
 
-    return [center_x, center_y, width, height, confidence, class_idx]
 
 def bbs_to_centers_scales(bbs_orig: np.ndarray, input_size: ImageSize):
     """

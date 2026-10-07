@@ -1,5 +1,10 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
 import numpy as np
 import pandas as pd
+from pedrec.utils.pandas_helper import read_pedrec_df
 
 from pedrec.evaluations.eval_np.eval_angular import get_angular_error_statistics, get_angular_distances
 from pedrec.evaluations.eval_np.eval_pose_2d import get_pck_normalized_joint_distances, get_ref_distance_torso, \
@@ -38,8 +43,8 @@ def get_pck_2d(gt_array, pred_array, visible_array, threshold):
 
 
 def evaluate_conti_catalogue(dataset_df_path: str, result_df_path: str):
-    gt_df = pd.read_pickle(dataset_df_path)
-    pred_df = pd.read_pickle(result_df_path)
+    gt_df = read_pedrec_df(dataset_df_path)
+    pred_df = read_pedrec_df(result_df_path)
     skeleton2ds_gt, skeleton3ds_gt, body_orientations_gt, head_orientations_gt, bbs_gt, env_positions_gt = get_gt_arrays(gt_df)
     skeleton2ds_pred, skeleton3ds_pred, body_orientations_pred, head_orientations_pred = get_pred_arrays(pred_df)
     normalized_joint_distances_2d = get_pck_2d(skeleton2ds_gt[:, :, 0:2], skeleton2ds_pred[:, :, 0:2], skeleton2ds_gt[:, :, 3], 0.2)
