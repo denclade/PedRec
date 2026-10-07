@@ -23,22 +23,18 @@ def add_grid(view: gl.GLViewWidget, size: QtGui.QVector3D = QtGui.QVector3D(3, 3
 
 
 def get_limb_positions(skeleton: np.array, min_score: float = 0.3) -> Tuple[np.ndarray, np.ndarray]:
+    """Start / end point pairs of the limbs (GLLinePlotItem mode 'lines') and their colors."""
     limbs = []
     colors = []
-
-    # create the coordinate list for the lines
     for limb_idx, limb in enumerate(SKELETON_PEDREC):
-
         if skeleton[limb[0], 3] < min_score or skeleton[limb[1], 3] < min_score:
             continue
-        for i in range(2):
-            limbs.append(skeleton[limb[i], :3])
-        limbs.append([None, None, None])
+        limbs.append(skeleton[limb[0], :3])
+        limbs.append(skeleton[limb[1], :3])
         color = SKELETON_PEDREC_LIMB_COLORS[limb_idx].rgba_float_list
         colors.append(color)
         colors.append(color)
-        colors.append(color)
-    return np.array(limbs), np.array(colors)
+    return np.array(limbs, dtype=np.float32), np.array(colors, dtype=np.float32)
 
 
 def get_joint_positions(skeleton: np.array, min_score: float = 0.3) -> Tuple[np.ndarray, np.ndarray]:
