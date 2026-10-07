@@ -1,5 +1,11 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
 import csv
 import logging
+
 import math
 import os.path
 import os.path
@@ -11,12 +17,14 @@ import torch
 from sklearn.metrics import average_precision_score, recall_score
 from torchvision import transforms
 
+from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 from pedrec.utils.augmentation_helper import get_affine_transforms
 from pedrec.utils.bb_helper import get_center_bb_from_coord_bb, \
     bb_to_center_scale
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
 from pedrec.utils.demo_helper import init_pose_model
 from pedrec.utils.torch_utils.torch_helper import get_device
 
@@ -99,19 +107,26 @@ def get_angular_distance(phi_gt_deg, phi_pred_deg):
     return math.degrees(np.minimum(2 * math.pi - dist_phi, dist_phi))
 
 
-if __name__ == "__main__":
-    logger = logging.getLogger(__name__)
-    # pedrecnet_weights = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_0_net.pth"
-    # pedrecnet_weights = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_mebow_0_net.pth"
-    # pedrecnet_weights = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth"
-    # pedrecnet_weights = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_tud_0_net.pth"
-    # pedrecnet_weights = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_tud_0_net.pth"
-    pedrecnet_weights = "data/models/pedrec/experiment_pedrec_p2d3d_c_o_sim_0_net.pth"
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Body orientation accuracy of a PedRecNet on the TUD multiview "
+                                                 "pedestrians test set.")
+    parser.add_argument("--weights", default=None,
+                        help=f"PedRecNet *_net.pth (default: <data-dir>/{default_paths.PEDREC_NET_WEIGHTS}).")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--cpu", action="store_true")
+    return parser.parse_args(argv)
 
-    train_data = get_xml_data("data/datasets/cvpr10_multiview_pedestrians/viewpoints_test.al")
+
+def main(argv=None):
+    args = parse_args(argv)
+    logger = logging.getLogger(__name__)
+    pedrecnet_weights = args.weights or default_paths.pedrec_net_weights(args.data_dir)
+    experiment_paths = get_experiment_paths(args.data_dir)
+
+    train_data = get_xml_data(os.path.join(experiment_paths.tud_dir, "viewpoints_test.al"))
     cfg = PedRecNet50Config()
     app_cfg = AppConfig()
-    device = get_device(app_cfg.cuda.use_gpu)
+    device = get_device(not args.cpu)
 
     # Pose
     pose_cfg = PedRecNet50Config()
@@ -163,9 +178,6 @@ if __name__ == "__main__":
     acc45 = len(np.where(distances <= 45)[0]) / len(train_data)
     print(f"Correct: {corrects}, total: {len(train_data)}, percentage: {corrects / len(train_data)}, Acc22_5: {acc22_5}, Acc45: {acc45} mean: {mean_distance}, std: {std_distance}")
 
-        # x = 1
 
-        # create model input
-        # run model
-        # save output gt / pred
-    a = 1
+if __name__ == "__main__":
+    main()

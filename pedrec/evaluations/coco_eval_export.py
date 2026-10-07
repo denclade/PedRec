@@ -1,16 +1,19 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
 import math
 import os
-import sys
 from pathlib import Path
 
 from pedrec.evaluations.eval_np.eval_angular import get_angular_distances
 from pedrec.evaluations.validate import get_2d_pose_pck_results
 from pedrec.models.validation.orientation_validation_results import FullOrientationValidationResult
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.pedrec_stages import STAGES
 from pedrec.utils.skeleton_helper import flip_lr_joints
 
-print(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import numpy as np
 import pandas as pd
 import json
@@ -18,6 +21,9 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 from pedrec.models.constants.skeleton_coco import SKELETON_COCO_JOINTS
+
+
+dataset_root = "data/datasets/COCO"  # set by main()
 
 
 def get_skeleton2d(result_filename):
@@ -124,8 +130,8 @@ def get_results(experiment_name: str, flip_test: bool = False):
     pck_results = get_2d_pose_pck_results(skeleton_2d_gt, skeleton_2d)
     o_body_results = get_orientation_results(df_gt, df, df_flipped, flip_test)
 
-    coco_gt_path = "data/datasets/COCO/annotations/person_keypoints_val2017.json"
-    result_file_path = "coco_out.json"
+    coco_gt_path = os.path.join(dataset_root, "annotations", "person_keypoints_val2017.json")
+    result_file_path = os.path.join(dataset_root, "results", f"coco_out_{experiment_name}.json")
     with open(result_file_path, 'w') as outfile:
         json.dump(jsons, outfile, sort_keys=True, indent=4)
 
@@ -141,19 +147,27 @@ def get_results(experiment_name: str, flip_test: bool = False):
     return list(cocoEval.stats), pck_results, o_body_results
 
 
-if __name__ == "__main__":
-    experiment_paths = get_experiment_paths_home()
-    experiments = [
-        experiment_paths.pedrec_2d_c_path,
-        experiment_paths.pedrec_2d3d_c_h36m_path,
-        experiment_paths.pedrec_2d3d_c_sim_path,
-        experiment_paths.pedrec_2d3d_c_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_mebow_path,
-        experiment_paths.pedrec_2d3d_c_o_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_mebow_path,
-    ]
-    dataset_root = "data/datasets/COCO/"
+DEFAULT_EXPERIMENTS = ["p2d_c", "p2d3d_c_h36m", "p2d3d_c_sim", "p2d3d_c_h36m_sim", "p2d3d_c_o_h36m_mebow", "p2d3d_c_o_sim",
+                       "p2d3d_c_o_h36m_sim", "p2d3d_c_o_h36m_sim_mebow"]
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="COCO keypoint AP / PCK / orientation tables from the result "
+                                                 "dataframes written by tools/resultwriters/coco_to_results.py.")
+    parser.add_argument("--experiments", nargs="+", default=DEFAULT_EXPERIMENTS, choices=sorted(STAGES.keys()),
+                        metavar="STAGE", help="Training stages to evaluate.")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--no-flip-test", action="store_true", help="Do not average with the flipped results.")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    global dataset_root
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    dataset_root = experiment_paths.coco_dir
+    experiments = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
+    flip_test = not args.no_flip_test
 
     result_overview = [
         "| Experiment | AP |  Ap .5 |  AP .75 |  AP (M) |  AP (L) |  AR |  AR .5 |  AR .75 |  AR (M) |  AR (L) |"]
@@ -173,7 +187,7 @@ if __name__ == "__main__":
     for experiment in experiments:
         experiment_name = Path(experiment).stem
         print(f"## {experiment_name}")
-        results, pck_results, o_body_results = get_results(experiment_name, flip_test=True)
+        results, pck_results, o_body_results = get_results(experiment_name, flip_test=flip_test)
         results = [f"{result * 100:.2f}" for result in results]
         result_overview += [f"| {experiment_name} | {' | '.join(results)} |"]
         results = [f"${result}$" for result in results]
@@ -206,3 +220,7 @@ if __name__ == "__main__":
 
     for text in o_body_overview:
         print(text)
+
+
+if __name__ == "__main__":
+    main()

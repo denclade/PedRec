@@ -1,3 +1,7 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
 import logging
 import os
 import time

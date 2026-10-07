@@ -1,4 +1,9 @@
 import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
+import os
 import time
 from pathlib import Path
 
@@ -19,7 +24,6 @@ from pedrec.models.data_structures import ImageSize
 from pedrec.models.experiments.experiment_paths import ExperimentPaths
 from pedrec.networks.net_pedrec.ehpi_3d_net import Ehpi3DNet
 
-sys.path.append(".")
 
 import torch
 import torch.nn.parallel
@@ -27,7 +31,8 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.ehpi3d_variants import get_variant, VARIANTS
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
 from pedrec.training.experiments.experiment_train_helper import init_experiment
 from pedrec.utils.torch_utils.torch_helper import get_device, move_to_device
 
@@ -44,7 +49,8 @@ def initialize_from_imgnet(net, pose_resnet_weights_path: str):
     net.load_state_dict(net_weights)
 
 
-def get_val_loader(experiment_paths: ExperimentPaths, batch_size, action_list, dataset_cfg: PedRecTemporalDatasetConfig):
+def get_val_loader(experiment_paths: ExperimentPaths, batch_size, action_list, dataset_cfg: PedRecTemporalDatasetConfig,
+                   num_workers: int = 12):
     trans = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.400, 0.443, 0.401], std=[0.203, 0.269, 0.203])
@@ -58,20 +64,20 @@ def get_val_loader(experiment_paths: ExperimentPaths, batch_size, action_list, d
                                       trans,
                                       pose_results_file=experiment_paths.sim_c01_val_results_filename)
 
-    return DataLoader(sim_val, batch_size=batch_size, shuffle=False, num_workers=12, worker_init_fn=worker_init_fn)
+    return DataLoader(sim_val, batch_size=batch_size, shuffle=False, num_workers=num_workers,
+                      worker_init_fn=worker_init_fn)
 
 
-def main(net_weights_path, dataset_cfg: PedRecTemporalDatasetConfig):
-
+def main(net_weights_path, dataset_cfg: PedRecTemporalDatasetConfig, experiment_paths: ExperimentPaths,
+         num_workers: int = 12, use_gpu: bool = True):
     app_cfg = AppConfig()
-    experiment_paths = get_experiment_paths_home()
     init_experiment(42)
-    device = get_device(use_gpu=True)
+    device = get_device(use_gpu=use_gpu)
     net = Ehpi3DNet(len(app_cfg.inference.action_list))
-    net.load_state_dict(torch.load(net_weights_path))
+    net.load_state_dict(torch.load(net_weights_path, map_location=device))
     net.to(device)
 
-    val_loader = get_val_loader(experiment_paths, 48, app_cfg.inference.action_list, dataset_cfg)
+    val_loader = get_val_loader(experiment_paths, 48, app_cfg.inference.action_list, dataset_cfg, num_workers)
 
     ## LR
     criterion = BCEWithLogitsLoss()
@@ -195,8 +201,8 @@ def main(net_weights_path, dataset_cfg: PedRecTemporalDatasetConfig):
     print(f"Total: mBAcc {balanced_acc*100:.2f}%, mAP: {map*100:.2f}%, CF1: {cf1*100:.2f}%, CP {cp*100:.2f}%, CR: {cr*100:.2f}%, OF1: {of1*100:.2f}%, OP {op*100:.2f}%, OR: {or_*100:.2f}%")
     return balanced_acc, map, cf1, cp, cr, of1, op, or_
 
-def get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio):
-    balanced_acc, map, cf1, cp, cr, of1, op, or_ = main(weights_path, pedrec_cfg)
+def get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio, experiment_paths, num_workers, use_gpu):
+    balanced_acc, map, cf1, cp, cr, of1, op, or_ = main(weights_path, pedrec_cfg, experiment_paths, num_workers, use_gpu)
     experiment_name = Path(weights_path).stem\
         .replace('ehpi_3d_sim_c01_actionrec_', '')\
         .replace('gt', 'G')\
@@ -209,185 +215,56 @@ def get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio):
     return md, latex
 
 
-def run_experiments(gt_result_ratio: float):
+DEFAULT_VARIANTS = ["pred", "gt", "gt_pred", "gt_pred_ehpi2dvids", "gt_pred_no_unit_skeleton", "gt_pred_zero_by_score",
+                    "gt_pred_15fps", "gt_pred_ehpi2dvids_15fps", "gt_pred_64frames"]
+
+
+def get_eval_cfg(variant_name: str, gt_result_ratio: float) -> PedRecTemporalDatasetConfig:
+    """Evaluation config of a training variant: no augmentation, given gt / prediction ratio."""
+    cfg = get_variant(variant_name).get_pedrec_cfg()
+    cfg.flip = False
+    cfg.scale_factor = 0
+    cfg.rotation_factor = 0
+    cfg.gt_result_ratio = gt_result_ratio
+    return cfg
+
+
+def run_experiments(gt_result_ratio: float, variants, experiment_paths: ExperimentPaths, num_workers: int,
+                    use_gpu: bool):
     results = []
     results_latex = []
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_pred.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_ehpi2dvids.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=False,
-        min_joint_score=0,
-        add_2d=False
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_no_unit_skeleton.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0.4,
-        add_2d=False
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_zero_by_score.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=True,
-        scale_factor=0.25,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False,
-        frame_sampling=2
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_15fps.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False,
-        frame_sampling=2
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_ehpi2dvids_15fps.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
-    pedrec_cfg = PedRecTemporalDatasetConfig(
-        flip=False,
-        scale_factor=0,
-        rotation_factor=0,
-        skeleton_3d_range=3000,
-        img_pattern="view_{cam_name}-frame_{id}.{type}",
-        subsample=1,
-        subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC,
-        gt_result_ratio=gt_result_ratio,
-        use_unit_skeleton=True,
-        min_joint_score=0,
-        add_2d=False,
-        temporal_field=ImageSize(64, 32)
-    )
-    weights_path = "data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth"
-    md, latex = get_experiment_results(weights_path, pedrec_cfg, gt_result_ratio)
-    results.append(md)
-    results_latex.append(latex)
-
+    for variant_name in variants:
+        variant = get_variant(variant_name)
+        weights_path = os.path.join(experiment_paths.ehpi3d_output_dir, f"{variant.experiment_name}.pth")
+        md, latex = get_experiment_results(weights_path, get_eval_cfg(variant_name, gt_result_ratio), gt_result_ratio,
+                                           experiment_paths, num_workers, use_gpu)
+        results.append(md)
+        results_latex.append(latex)
     return results, results_latex
 
-if __name__ == '__main__':
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Evaluates EHPI3D action recognition checkpoints on SIM-C01 (val).")
+    parser.add_argument("--variants", nargs="+", default=DEFAULT_VARIANTS, choices=sorted(VARIANTS.keys()),
+                        metavar="VARIANT", help="Trained variants to evaluate (see train_ehpi3d.py --list).")
+    parser.add_argument("--gt-result-ratios", nargs="+", type=float, default=[1.0, 0.0],
+                        help="Evaluate with ground truth (1) and / or predicted (0) skeletons (default: 1 0).")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--num-workers", type=int, default=12)
+    parser.add_argument("--cpu", action="store_true")
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
     results = ["| Model | GT/Result Ratio | Balanced Acc | mAP | OF1 | OP | OR | CF1 | CP | CR"]
     results_latex = ["Model & G & mBAcc & mAP & OF1 & OP & OR & CF1 & CP & CR \\\\\\midrule"]
-    result, result_latex = run_experiments(1)
-    results += result
-    results_latex += result_latex
-    result, result_latex = run_experiments(0)
-    results += result
-    results_latex += result_latex
+    for gt_result_ratio in args.gt_result_ratios:
+        result, result_latex = run_experiments(gt_result_ratio, args.variants, experiment_paths, args.num_workers,
+                                               not args.cpu)
+        results += result
+        results_latex += result_latex
 
     for result in results:
         print(result)
@@ -396,4 +273,5 @@ if __name__ == '__main__':
         print(result)
 
 
-# TODO: Eval mit Recognition Pipeline
+if __name__ == '__main__':
+    cli()

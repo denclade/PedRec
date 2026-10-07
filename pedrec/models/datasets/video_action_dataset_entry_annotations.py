@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 import numpy as np
@@ -10,10 +10,10 @@ from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 @dataclass
 class VideoActionDatasetEntryAnnotations(object):
     img_path: str = None
-    skeleton_2d: np.ndarray = np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32)
-    skeleton_3d: np.ndarray = np.zeros((len(SKELETON_PEDREC_JOINTS), 5), dtype=np.float32)
-    body_orientation: np.ndarray = np.zeros((4,), dtype=np.float32)
-    head_orientation: np.ndarray = np.zeros((4,), dtype=np.float32)
+    skeleton_2d: np.ndarray = field(default_factory=lambda: np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32))
+    skeleton_3d: np.ndarray = field(default_factory=lambda: np.zeros((len(SKELETON_PEDREC_JOINTS), 5), dtype=np.float32))
+    body_orientation: np.ndarray = field(default_factory=lambda: np.zeros((4,), dtype=np.float32))
+    head_orientation: np.ndarray = field(default_factory=lambda: np.zeros((4,), dtype=np.float32))
     scene_start: int = 0
     scene_end: int = 0
     actions: List[List[int]] = None

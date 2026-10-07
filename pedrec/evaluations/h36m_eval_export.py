@@ -1,5 +1,9 @@
-import os
 import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
+import os
 from pathlib import Path
 
 from pedrec.evaluations.eval_helper import get_skel_coco, get_skel_h36m, get_skel_h36m_handfootends
@@ -7,33 +11,35 @@ from pedrec.evaluations.validate import get_2d_pose_pck_results, get_3d_pose_res
 from pedrec.models.constants.skeleton_coco import SKELETON_COCO_JOINTS
 from pedrec.models.constants.skeleton_h36m import SKELETON_H36M_JOINTS, SKELETON_H36M_HANDFOOTENDS_JOINTS
 from pedrec.models.constants.skeletons import SKELETON
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.pedrec_stages import STAGES
 from pedrec.utils.skeleton_helper import flip_lr_joints
 from pedrec.utils.skeleton_helper_3d import flip_lr_joints_3d
 
-print(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import numpy as np
 import pandas as pd
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 
 h36m_actions = [
-    "Directions(?: .)*\.",
-    "Discussion(?: .)*\.",
-    "Eating(?: .)*\.",
-    "Greeting(?: .)*\.",
-    "Phoning(?: .)*\.",
-    "Photo(?: .)*\.",
-    "Posing(?: .)*\.",
-    "Purchases(?: .)*\.",
-    "Sitting(?: .)*\.",
-    "SittingDown(?: .)*\.",
-    "Smoking(?: .)*\.",
-    "Waiting(?: .)*\.",
-    "WalkDog(?: .)*\.|WalkingDog(?: .)*\.",
-    "Walking(?: .)*\.",
-    "WalkTogether(?: .)*\."
+    r"Directions(?: .)*\.",
+    r"Discussion(?: .)*\.",
+    r"Eating(?: .)*\.",
+    r"Greeting(?: .)*\.",
+    r"Phoning(?: .)*\.",
+    r"Photo(?: .)*\.",
+    r"Posing(?: .)*\.",
+    r"Purchases(?: .)*\.",
+    r"Sitting(?: .)*\.",
+    r"SittingDown(?: .)*\.",
+    r"Smoking(?: .)*\.",
+    r"Waiting(?: .)*\.",
+    r"WalkDog(?: .)*\.|WalkingDog(?: .)*\.",
+    r"Walking(?: .)*\.",
+    r"WalkTogether(?: .)*\."
 ]
+
+
+h36m_root = "data/datasets/Human3.6m"  # set by main()
 
 
 def get_df(dataset_root, result_filename):
@@ -84,9 +90,9 @@ def get_msjpe(output, target):
 #     return np.mean(x)
 
 def get_results(experiment_name: str, flip_test: bool = False, skeleton: SKELETON = SKELETON.H36M):
-    df_gt = get_df("data/datasets/Human3.6m", f"H36M_gt_df_{experiment_name}.pkl")
-    df = get_df("data/datasets/Human3.6m", f"H36M_pred_df_{experiment_name}.pkl")
-    df_flipped = get_df("data/datasets/Human3.6m", f"H36M_pred_df_{experiment_name}_flipped.pkl")
+    df_gt = get_df(h36m_root, f"H36M_gt_df_{experiment_name}.pkl")
+    df = get_df(h36m_root, f"H36M_pred_df_{experiment_name}.pkl")
+    df_flipped = get_df(h36m_root, f"H36M_pred_df_{experiment_name}_flipped.pkl") if flip_test else None
     msjpes = []
     used_idx = []
     for action_filter in h36m_actions:
@@ -155,23 +161,26 @@ def get_results(experiment_name: str, flip_test: bool = False, skeleton: SKELETO
     return msjpes, pck_results, msjpe_results
 
 
-if __name__ == "__main__":
-    experiment_paths = get_experiment_paths_home()
-    experiments = [
-        # experiment_paths.pose_2d_coco_only_weights_path,
-        # experiment_paths.pedrec_2d_h36m_path,
-        # experiment_paths.pedrec_2d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_path,
-        # experiment_paths.pedrec_2d3d_sim_path,
-        # experiment_paths.pedrec_2d3d_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_path,
-        # experiment_paths.pedrec_2d3d_c_sim_path,
-        # experiment_paths.pedrec_2d3d_c_h36m_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_mebow_path,
-        # experiment_paths.pedrec_2d3d_c_o_sim_path,
-        # experiment_paths.pedrec_2d3d_c_o_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_mebow_path
-    ]
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Human3.6m per-action MPJPE / PCK tables from the result dataframes "
+                                                 "written by tools/resultwriters/h36m_to_results.py.")
+    parser.add_argument("--experiments", nargs="+", default=DEFAULT_EXPERIMENTS, choices=sorted(STAGES.keys()),
+                        metavar="STAGE", help="Training stages to evaluate.")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--flip-test", action="store_true", help="Average with the flipped results.")
+    parser.add_argument("--skeleton", choices=[s.name for s in SKELETON], default=SKELETON.H36M.name)
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    global h36m_root
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    h36m_root = os.path.dirname(os.path.normpath(experiment_paths.h36m_val_dir))
+    experiments = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
 
     result_overview = [
         "| Experiment | Dir. |  Disc. | Eat | Greet | Phone |  Photo |  Pose | Purch. |  Sit |  SitD. | Smoke | Wait | WalkD. | Walk | WalkT. | Avg |"]
@@ -191,7 +200,8 @@ if __name__ == "__main__":
     for experiment in experiments:
         experiment_name = Path(experiment).stem
         print(f"## {experiment_name}")
-        msjpes, pck_results, msjpe_results = get_results(experiment_name, flip_test=False, skeleton=SKELETON.H36M)
+        msjpes, pck_results, msjpe_results = get_results(experiment_name, flip_test=args.flip_test,
+                                                          skeleton=SKELETON[args.skeleton])
         msjpe_mean = 0
         for msjpe in msjpes:
             print(f"{msjpe[0]}: {msjpe[1]}")
@@ -217,3 +227,6 @@ if __name__ == "__main__":
     for text in msjpe_overview:
         print(text)
 
+
+if __name__ == "__main__":
+    main()

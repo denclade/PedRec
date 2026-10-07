@@ -26,7 +26,7 @@ class VideoActionDataset(Dataset):
                  action_list: List[ACTION],
                  transform: Callable,
                  included_folders: List[str] = None,
-                 excluded_folders: List[str] = ["SIM", "2019_ITS_Journal_Eval2"]
+                 excluded_folders: List[str] = ("SIM", "2019_ITS_Journal_Eval2")
                  ):
         """
         pose_results_file: Filename of results from an algorithm df, should contain pose2d / 3d results with same index

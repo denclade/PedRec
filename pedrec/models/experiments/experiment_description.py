@@ -19,17 +19,18 @@ class ExperimentDescription(object):
     experiment_paths: ExperimentPaths
     net_cfg: PedRecNetConfig
     initialization_notes: str
-    coco_train_dataset_cfg: CocoDatasetConfig = get_coco_dataset_cfg_default()
-    tud_train_dataset_cfg: TudDatasetConfig = get_tud_dataset_cfg_default()
-    sim_train_dataset_cfg: PedRecDatasetConfig = get_sim_dataset_cfg_default()
-    h36m_train_dataset_cfg: PedRecDatasetConfig = get_h36m_dataset_cfg_default()
-    coco_val_dataset_cfg: CocoDatasetConfig = get_coco_dataset_cfg_default()
-    tud_val_dataset_cfg: TudDatasetConfig = get_tud_dataset_cfg_default()
-    sim_val_dataset_cfg: PedRecDatasetConfig = get_sim_val_dataset_cfg_default()
-    h36m_val_dataset_cfg: PedRecDatasetConfig = get_h36m_val_dataset_cfg_default()
+    coco_train_dataset_cfg: CocoDatasetConfig = field(default_factory=get_coco_dataset_cfg_default)
+    tud_train_dataset_cfg: TudDatasetConfig = field(default_factory=get_tud_dataset_cfg_default)
+    sim_train_dataset_cfg: PedRecDatasetConfig = field(default_factory=get_sim_dataset_cfg_default)
+    h36m_train_dataset_cfg: PedRecDatasetConfig = field(default_factory=get_h36m_dataset_cfg_default)
+    coco_val_dataset_cfg: CocoDatasetConfig = field(default_factory=get_coco_dataset_cfg_default)
+    tud_val_dataset_cfg: TudDatasetConfig = field(default_factory=get_tud_dataset_cfg_default)
+    sim_val_dataset_cfg: PedRecDatasetConfig = field(default_factory=get_sim_val_dataset_cfg_default)
+    h36m_val_dataset_cfg: PedRecDatasetConfig = field(default_factory=get_h36m_val_dataset_cfg_default)
     seed: int = 42
     batch_size: int = 48
     batch_size_validate: int = 48
+    num_workers: int = 12
 
     use_train_coco: bool = True
     use_train_sim: bool = True

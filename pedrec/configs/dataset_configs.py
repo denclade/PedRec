@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pedrec.models.constants.sample_method import SAMPLE_METHOD
 from pedrec.models.data_structures import ImageSize
@@ -27,7 +27,7 @@ class VideoActionDatasetConfig:
     use_unit_skeleton: bool
     min_joint_score: float
     add_2d: bool
-    temporal_field: ImageSize = ImageSize(32, 32)
+    temporal_field: ImageSize = field(default_factory=lambda: ImageSize(32, 32))
     frame_sampling: int = 1
 
 
@@ -43,7 +43,7 @@ class PedRecTemporalDatasetConfig:
     use_unit_skeleton: bool
     min_joint_score: float
     add_2d: bool
-    temporal_field: ImageSize = ImageSize(32, 32)
+    temporal_field: ImageSize = field(default_factory=lambda: ImageSize(32, 32))
     gt_result_ratio: float = 1.0
     frame_sampling: int = 1
 

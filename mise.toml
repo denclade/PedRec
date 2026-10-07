@@ -1,0 +1,222 @@
+# PedRec task runner / environment definition for mise (https://mise.jdx.dev)
+#
+#   mise install          # installs the pinned Python + uv
+#   mise run setup        # creates .venv and installs the requirements (CUDA 11.3 wheels)
+#   mise run demo         # runs the Qt demo on the default demo video
+#   mise tasks            # lists all tasks
+#
+# Every task accepts additional command line options which are appended to the underlying script, e.g.
+#   mise run train:pedrec --stage p2d_coco_only --batch-size 32
+#   mise run demo:headless --video my.mp4 --output out.mp4
+# The data root (datasets, models, demo files) defaults to ./data and can be changed via PEDREC_DATA_DIR
+# (e.g. in a local, git-ignored mise.local.toml).
+
+[tools]
+python = "3.9"
+uv = "latest"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+PEDREC_DATA_DIR = "{{ config_root }}/data"
+PYTHONPATH = "{{ config_root }}"
+NUMEXPR_MAX_THREADS = "16"
+
+# ------------------------------------------------------------------------------------------------------- setup
+[tasks.setup]
+description = "Install the requirements into .venv (torch 1.10.1 CUDA 11.3 wheels)"
+run = "uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113"
+
+[tasks."setup:cpu"]
+description = "Install the requirements into .venv with CPU-only torch wheels"
+run = "uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu"
+
+[tasks.check]
+description = "Byte-compile all sources and print the registered training stages / variants"
+run = [
+    "python -m compileall -q pedrec",
+    "python pedrec/training/train_pedrec.py --list",
+    "python pedrec/training/train_ehpi3d.py --list",
+]
+
+[tasks."download:models"]
+description = "Download the pretrained YoloV4, PedRecNet, EHPI3D and pose-resnet weights into $PEDREC_DATA_DIR/models"
+run = """
+set -euo pipefail
+base="https://dennisnotes.com/files/pedrec/models"
+dl() { mkdir -p "$(dirname "$2")"; if [ -f "$2" ]; then echo "exists: $2"; else echo "downloading $1"; curl -L --fail -o "$2" "$1"; fi; }
+dl "$base/yolo_v4/yolov4.pth" "$PEDREC_DATA_DIR/models/yolo_v4/yolov4.pth"
+dl "$base/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth" "$PEDREC_DATA_DIR/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth"
+dl "$base/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth" "$PEDREC_DATA_DIR/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth"
+dl "$base/human_pose_baseline/pose_resnet_50_256x192.pth.tar" "$PEDREC_DATA_DIR/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar"
+"""
+
+[tasks."download:checkpoints"]
+description = "Download the intermediate training checkpoint(s) of a stage: mise run download:checkpoints <stage>"
+run = """
+set -euo pipefail
+stage="{{arg(name="stage", default="p2d3d_c_o_h36m_sim")}}"
+dir="$PEDREC_DATA_DIR/models/pedrec/single_results"
+mkdir -p "$dir"
+file="experiment_pedrec_${stage}_0.pth"
+if [ -f "$dir/$file" ]; then echo "exists: $dir/$file"; else curl -L --fail -o "$dir/$file" "https://dennisnotes.com/files/pedrec/single_results/$file"; fi
+"""
+
+[tasks."download:demo"]
+description = "Download the demo video into $PEDREC_DATA_DIR/demo"
+run = """
+set -euo pipefail
+mkdir -p "$PEDREC_DATA_DIR/demo"
+f="$PEDREC_DATA_DIR/demo/05070850_9672.m4v"
+if [ -f "$f" ]; then echo "exists: $f"; else curl -L --fail -o "$f" "https://dennisnotes.com/files/pedrec/demo/05070850_9672.m4v"; fi
+echo "Note: the pexels video (multi_person_crossing_street.mp4) has to be downloaded manually, see README."
+"""
+
+# ------------------------------------------------------------------------------------------------------- demo / run
+[tasks.demo]
+description = "Qt demo (detection, pose, orientation, tracking, actions) on the default demo video; pass --video/--images/--image/--webcam"
+run = "python pedrec/demo.py"
+
+[tasks."demo:video"]
+description = "Qt demo on a video file: mise run demo:video <file>"
+run = 'python pedrec/demo.py --video "{{arg(name="video")}}"'
+
+[tasks."demo:images"]
+description = "Qt demo on an image sequence directory: mise run demo:images <dir>"
+run = 'python pedrec/demo.py --images "{{arg(name="dir")}}"'
+
+[tasks."demo:image"]
+description = "Qt demo on a single image: mise run demo:image <file>"
+run = 'python pedrec/demo.py --image "{{arg(name="image")}}"'
+
+[tasks."demo:webcam"]
+description = "Qt demo on a webcam: mise run demo:webcam [id]"
+run = 'python pedrec/demo.py --webcam {{arg(name="id", default="0")}} --size 1280x720'
+
+[tasks."demo:headless"]
+description = "Full pipeline without GUI; add --output out.mp4 / --json out.json and --video/--images/--image"
+run = "python pedrec/demo.py --headless"
+
+[tasks."demo:detector"]
+description = "Detector (YoloV4) only, headless: mise run demo:detector --video in.mp4 --output out.mp4"
+run = "python pedrec/demo.py --headless --no-pose"
+
+[tasks."demo:pose"]
+description = "PedRecNet only (full frame as bb, no detector / tracking / actions), headless: mise run demo:pose --image person.jpg --output out.jpg --json out.json"
+run = "python pedrec/demo.py --headless --no-detector --no-tracking --no-action"
+
+[tasks."demo:detector-pose"]
+description = "Detector + PedRecNet (no tracking / actions), headless"
+run = "python pedrec/demo.py --headless --no-tracking"
+
+[tasks."demo:no-action"]
+description = "Detector + PedRecNet + tracking without action recognition (GUI)"
+run = "python pedrec/demo.py --no-action"
+
+# ------------------------------------------------------------------------------------------------------- training
+[tasks."train:list"]
+description = "List the PedRecNet training stages and their dependencies"
+run = "python pedrec/training/train_pedrec.py --list"
+
+[tasks."train:pedrec"]
+description = "Train one PedRecNet stage (default: the published p2d3d_c_o_h36m_sim_mebow); e.g. --stage p2d_coco_only"
+run = "python pedrec/training/train_pedrec.py"
+
+[tasks."train:pedrec:chain"]
+description = "Train all stages up to the given one in order, skipping stages with an existing checkpoint: mise run train:pedrec:chain [stage]"
+run = """
+set -euo pipefail
+target="{{arg(name="stage", default="p2d3d_c_o_h36m_sim_mebow")}}"
+for stage in $(python pedrec/training/train_pedrec.py --chain --stage "$target" | sed 's/ -> / /g'); do
+  ckpt="$PEDREC_DATA_DIR/models/pedrec/single_results/experiment_pedrec_${stage}_0.pth"
+  if [ -f "$ckpt" ]; then echo "### skipping $stage (checkpoint exists: $ckpt)"; continue; fi
+  echo "### training stage $stage"
+  python pedrec/training/train_pedrec.py --stage "$stage"
+done
+"""
+
+[tasks."train:pedrec:2d"]
+description = "Train the 2D pose stage only (COCO, from pose-resnet weights)"
+run = "python pedrec/training/train_pedrec.py --stage p2d_coco_only"
+
+[tasks."train:pedrec:3d"]
+description = "Train the 2D + 3D pose stage (COCO + Human3.6m + SIM)"
+run = "python pedrec/training/train_pedrec.py --stage p2d3d_h36m_sim"
+
+[tasks."train:pedrec:conf"]
+description = "Train the joint confidence stage (COCO + Human3.6m + SIM)"
+run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_h36m_sim"
+
+[tasks."train:pedrec:orientation"]
+description = "Train the full network incl. orientation (COCO MEBOW + Human3.6m + SIM) = published model"
+run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_o_h36m_sim_mebow"
+
+[tasks."train:ehpi3d:list"]
+description = "List the EHPI3D action recognition training variants"
+run = "python pedrec/training/train_ehpi3d.py --list"
+
+[tasks."train:ehpi3d"]
+description = "Train an EHPI3D action recognition variant (default: gt_pred_64frames = published model); e.g. --variant gt"
+run = "python pedrec/training/train_ehpi3d.py"
+
+[tasks."train:ehpi3d:data"]
+description = "Create the EHPI3D training input: PedRecNet results on SIM-C01 train + val, expanded to all frames"
+run = [
+    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split train",
+    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split train",
+    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split val",
+    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split val",
+]
+
+# ------------------------------------------------------------------------------------------------------- evaluation
+[tasks."eval:pedrec"]
+description = "Validate a PedRecNet checkpoint on COCO / SIM / Human3.6m (2D, 3D, confidence, orientation); --weights <file>"
+run = "python pedrec/evaluations/validate_pedrec.py"
+
+[tasks."eval:h36m"]
+description = "Per-action MPJPE of a PedRecNet on Human3.6m; --weights <file>"
+run = "python pedrec/evaluations/eval_h36m.py"
+
+[tasks."eval:coco-orientation"]
+description = "Body orientation accuracy on COCO (MEBOW); --weights <file>"
+run = "python pedrec/evaluations/eval_coco_orientation.py"
+
+[tasks."eval:tud-orientation"]
+description = "Body orientation accuracy on TUD multiview pedestrians; --weights <file>"
+run = "python pedrec/evaluations/eval_tud_orientation.py"
+
+[tasks."eval:ehpi3d"]
+description = "Action recognition metrics of EHPI3D variants on SIM-C01; --variants gt_pred_64frames ..."
+run = "python pedrec/evaluations/eval_ehpi3d.py"
+
+[tasks."results:coco"]
+description = "Write PedRecNet result dataframes for COCO val (input of export:coco); --experiments <stages>"
+run = "python pedrec/tools/resultwriters/coco_to_results.py"
+
+[tasks."results:h36m"]
+description = "Write PedRecNet result dataframes for Human3.6m val (input of export:h36m)"
+run = "python pedrec/tools/resultwriters/h36m_to_results.py"
+
+[tasks."results:sim-c01"]
+description = "Write PedRecNet result dataframes for SIM-C01 (input of export:sim-c01 and the EHPI3D training); --split train|val"
+run = "python pedrec/tools/resultwriters/sim_c01_to_results.py"
+
+[tasks."export:coco"]
+description = "COCO keypoint AP / PCK / orientation result tables (markdown + latex)"
+run = "python pedrec/evaluations/coco_eval_export.py"
+
+[tasks."export:h36m"]
+description = "Human3.6m per-action MPJPE / PCK result tables"
+run = "python pedrec/evaluations/h36m_eval_export.py"
+
+[tasks."export:sim-c01"]
+description = "SIM-C01 MSJPE / PCK / orientation result tables"
+run = "python pedrec/evaluations/sim_c01_eval_export.py"
+
+# ------------------------------------------------------------------------------------------------------- tools
+[tasks."tools:extract-net"]
+description = "Extract the plain network weights (*_net.pth, used by the demo) from a training checkpoint: --stage <stage>"
+run = "python pedrec/tools/networks/mtl_net_extractor.py"
+
+[tasks."tools:ehpi-videos"]
+description = "Run PedRecNet on the EHPI video dataset and write the skeleton dataframe used by the *_ehpi2dvids variants"
+run = "python pedrec/ehpi_dataset_vids_to_dataframe.py"

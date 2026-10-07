@@ -53,7 +53,7 @@ def get_annotations_from_pedrec_df(df_path: str,
         filters = filters & get_filter_actions(df, action_filter)
 
     if is_h36m:
-        filter_s11 = ~((df['subject_id'] == "S11") & (df['img_dir'].str.contains("Directions\.")))
+        filter_s11 = ~((df['subject_id'] == "S11") & (df['img_dir'].str.contains("Directions\\.")))
         filters = filters & filter_s11
     df['original_index'] = range(0, len(df))
     df_only_valid_skels = df[filters]

@@ -1,8 +1,9 @@
 import sys
 
+sys.path.append('.')  # allow running as a script from the repository root
+
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 
-sys.path.append(".")
 
 from torch.utils.data import DataLoader
 
@@ -177,11 +178,14 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
     print(df.memory_usage(deep=True))
     df.to_pickle(output_path)
 
-if __name__ == '__main__':
-    df = pd.read_pickle("data/datasets/Conti01/rt_conti_01_train_FIN.pkl")
-    result_df = pd.read_pickle("data/datasets/Conti01/results/C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0.pkl")
+def write_allframes(dataset_path: str, result_path: str, output_path: str):
+    """
+    Expands a result dataframe (which only contains the valid frames) to all frames of the dataset dataframe so that
+    both share the same index (required by the temporal EHPI3D datasets). Missing frames are filled with zeros.
+    """
+    df = pd.read_pickle(dataset_path)
+    result_df = pd.read_pickle(result_path)
     result_df = result_df.drop(columns=['index'])
-    empty_row = [0] * len(result_df.columns)
 
     skeleton2d_visibles = [col for col in df if col.startswith('skeleton2d') and col.endswith('_visible')]
     df["visible_joints"] = df[skeleton2d_visibles].sum(axis=1)
@@ -197,4 +201,34 @@ if __name__ == '__main__':
     new_results_df = new_results_df.drop_duplicates(['original_index'], keep='last')
     new_results_df = new_results_df.sort_values('original_index')
     set_df_dtypes(new_results_df)
-    pd.to_pickle(new_results_df, "data/datasets/Conti01/C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_allframes.pkl")
+    pd.to_pickle(new_results_df, output_path)
+    print(f"Wrote {output_path}")
+
+
+def parse_args(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="Expands SIM-C01 result dataframes to all frames (*_allframes.pkl), "
+                                                 "the input format of the EHPI3D training / evaluation.")
+    parser.add_argument("--experiment", default="p2d3d_c_o_h36m_sim_mebow", help="Training stage name.")
+    parser.add_argument("--split", choices=["train", "val"], default="train")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    import os
+    from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    experiment_name = f"experiment_pedrec_{args.experiment}_0"
+    if args.split == "train":
+        dataset_dir, dataset_filename, prefix = experiment_paths.sim_c01_dir, experiment_paths.sim_c01_filename, "C01F_train_pred_df"
+    else:
+        dataset_dir, dataset_filename, prefix = experiment_paths.sim_c01_val_dir, experiment_paths.sim_c01_val_filename, "C01F_pred_df"
+    write_allframes(os.path.join(dataset_dir, dataset_filename),
+                    os.path.join(dataset_dir, "results", f"{prefix}_{experiment_name}.pkl"),
+                    os.path.join(dataset_dir, f"{prefix}_{experiment_name}_allframes.pkl"))
+
+
+if __name__ == '__main__':
+    cli()

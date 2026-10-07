@@ -7,7 +7,7 @@
 	"name": "Pedrec: Launch",
 	"type": "python",
         "request": "launch",
-        "program": "${workspaceRoot}/demo.py",
+        "program": "${workspaceRoot}/pedrec/demo.py",
         "cwd": "${workspaceRoot}",
         "stopOnEntry": false,
 	"python": "~/.virtualenvs/pedrec/bin/python"

@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 import numpy as np
@@ -11,14 +11,14 @@ from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 @dataclass
 class PedRecDatasetEntryAnnotations(object):
     img_path: str = None
-    bb: np.ndarray = np.zeros((6,), dtype=np.float32)
-    skeleton_2d: np.ndarray = np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32)
-    skeleton_3d: np.ndarray = np.zeros((len(SKELETON_PEDREC_JOINTS), 5), dtype=np.float32)
-    center: np.ndarray = np.zeros((2,), dtype=np.float32)
-    scale: np.ndarray = np.zeros((2,), dtype=np.float32)
-    env_position: np.ndarray = np.zeros((3,), dtype=np.float32)
-    body_orientation: np.ndarray = np.zeros((4,), dtype=np.float32)
-    head_orientation: np.ndarray = np.zeros((4,), dtype=np.float32)
+    bb: np.ndarray = field(default_factory=lambda: np.zeros((6,), dtype=np.float32))
+    skeleton_2d: np.ndarray = field(default_factory=lambda: np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32))
+    skeleton_3d: np.ndarray = field(default_factory=lambda: np.zeros((len(SKELETON_PEDREC_JOINTS), 5), dtype=np.float32))
+    center: np.ndarray = field(default_factory=lambda: np.zeros((2,), dtype=np.float32))
+    scale: np.ndarray = field(default_factory=lambda: np.zeros((2,), dtype=np.float32))
+    env_position: np.ndarray = field(default_factory=lambda: np.zeros((3,), dtype=np.float32))
+    body_orientation: np.ndarray = field(default_factory=lambda: np.zeros((4,), dtype=np.float32))
+    head_orientation: np.ndarray = field(default_factory=lambda: np.zeros((4,), dtype=np.float32))
     scene_id: int = 0
     scene_start: int = 0
     scene_end: int = 0
@@ -28,8 +28,8 @@ class PedRecDatasetEntryAnnotations(object):
     frame_nr_local: int = 0
     frame_nr_global: int = 0
     is_real_img: bool = True
-    skeleton_2d_results: np.ndarray = np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32)
-    skeleton_3d_results: np.ndarray = np.zeros((len(SKELETON_PEDREC_JOINTS), 5), dtype=np.float32)
+    skeleton_2d_results: np.ndarray = field(default_factory=lambda: np.zeros((len(SKELETON_PEDREC_JOINTS), 4), dtype=np.float32))
+    skeleton_3d_results: np.ndarray = field(default_factory=lambda: np.zeros((len(SKELETON_PEDREC_JOINTS), 5), dtype=np.float32))
 
 
 @dataclass()

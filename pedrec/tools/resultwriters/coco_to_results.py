@@ -1,16 +1,20 @@
-import os
 import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
+import argparse
+import os
 from pathlib import Path
 
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
 
-sys.path.append(".")
 
 from torch.utils.data import DataLoader
 
 from pedrec.datasets.coco_dataset import CocoDataset
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
-from pedrec.training.experiments.experiment_path_helper import get_experiment_paths_home
+from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.pedrec_stages import STAGES
 from pedrec.configs.dataset_configs import get_coco_dataset_cfg_default
 from pedrec.evaluations.eval_helper import get_total_coords
 from pedrec.models.constants.dataset_constants import DatasetType
@@ -157,18 +161,25 @@ def main(output_dir: str, output_postfix: str, net_cfg, coco_val: CocoDataset, w
     df_gt.to_pickle(output_path)
 
 
-if __name__ == '__main__':
-    experiment_paths = get_experiment_paths_home()
-    network_paths = [
-        experiment_paths.pedrec_2d_c_path,
-        experiment_paths.pedrec_2d3d_c_h36m_path,
-        experiment_paths.pedrec_2d3d_c_sim_path,
-        experiment_paths.pedrec_2d3d_c_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_mebow_path,
-        experiment_paths.pedrec_2d3d_c_o_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_path,
-        experiment_paths.pedrec_2d3d_c_o_h36m_sim_mebow_path,
-    ]
+DEFAULT_EXPERIMENTS = ["p2d_c", "p2d3d_c_h36m", "p2d3d_c_sim", "p2d3d_c_h36m_sim", "p2d3d_c_o_h36m_mebow", "p2d3d_c_o_sim",
+                       "p2d3d_c_o_h36m_sim", "p2d3d_c_o_h36m_sim_mebow"]
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Writes PedRecNet predictions on the COCO validation set as result "
+                                                 "dataframes (<coco-dir>/results) for evaluations/coco_eval_export.py.")
+    parser.add_argument("--experiments", nargs="+", default=DEFAULT_EXPERIMENTS, choices=sorted(STAGES.keys()),
+                        metavar="STAGE", help="Training stages (checkpoints) to run.")
+    parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
+    parser.add_argument("--no-flipped", action="store_true", help="Skip the flipped (flip test) run.")
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    args = parse_args(argv)
+    experiment_paths = get_experiment_paths(args.data_dir)
+    network_paths = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
+    output_dir = os.path.join(experiment_paths.coco_dir, "results")
     net_cfg = PedRecNet50Config()
     coco_val_dataset_cfg = get_coco_dataset_cfg_default()
 
@@ -197,12 +208,17 @@ if __name__ == '__main__':
 
     for net_path in network_paths:
         main(weights_path=net_path,
-             output_dir="data/datasets/COCO/results",
+             output_dir=output_dir,
              output_postfix=Path(net_path).stem,
              net_cfg=net_cfg,
              coco_val=coco_val)
-        main(weights_path=net_path,
-             output_dir="data/datasets/COCO/results",
-             output_postfix=f"{Path(net_path).stem}_flipped",
-             net_cfg=net_cfg,
-             coco_val=coco_val_flipped)
+        if not args.no_flipped:
+            main(weights_path=net_path,
+                 output_dir=output_dir,
+                 output_postfix=f"{Path(net_path).stem}_flipped",
+                 net_cfg=net_cfg,
+                 coco_val=coco_val_flipped)
+
+
+if __name__ == '__main__':
+    cli()

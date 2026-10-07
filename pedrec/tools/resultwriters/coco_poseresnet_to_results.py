@@ -1,11 +1,13 @@
+import sys
+
+sys.path.append('.')  # allow running as a script from the repository root
+
 import math
 import os
 
 from pedrec.networks.net_pedrec.pose_resnet import PoseResNet
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
-import sys
 
-sys.path.append(".")
 import cv2
 from torch.utils.data import DataLoader
 

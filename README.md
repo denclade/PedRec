@@ -24,26 +24,41 @@ D. Burgermeister and C. Curio, “PedRecNet: Multi-task deep neural network for 
 Vehicles Symposium (IV), 2022.
 ```
 
-# Installation
-## Requirements
-- Python 3.9 (venv suggested)
-- working CUDA / CUDNN
+# Quick start
+The repository uses [mise](https://mise.jdx.dev) as task runner and environment manager. All entry points (demo, training,
+evaluation, tools) are available as `mise` tasks (`mise tasks` lists them) and as plain Python scripts with `--help`.
 
-## Installation steps
-- Clone this repository
-- cd PedRec
-- pip install -r requirements.txt
-- Download the pretrained models if you want to run the PedRecNet
-- Download the required datasets, dataframes and maybe some of the checkpoints (see Dataset Download section)
+```bash
+mise install                 # pinned Python 3.9 + uv
+mise run setup               # .venv with torch 1.10.1 (CUDA 11.3 wheels); "setup:cpu" for CPU-only wheels
+mise run download:models     # YoloV4, PedRecNet, EHPI3D and pose-resnet weights -> data/models
+mise run demo --video my_video.mp4
+```
+
+Data (datasets, models, demo videos) live below the data root, `./data` by default. Change it via the
+`PEDREC_DATA_DIR` environment variable, e.g. in a git-ignored `mise.local.toml`:
+
+```toml
+[env]
+PEDREC_DATA_DIR = "/mnt/storage/pedrec_data"
+```
+
+## Manual installation (without mise)
+- Python 3.9 (venv suggested), working CUDA / CUDNN
+- `pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113`
+- Run the scripts from the repository root, e.g. `python pedrec/demo.py --help`
 
 ## Required Data
 ### Pretrained models
+`mise run download:models` fetches all of them, the manual locations are:
+
 - [YoloV4 weights](https://dennisnotes.com/files/pedrec/models/yolo_v4/yolov4.pth) (adapted from https://github.com/Tianxiaomo/pytorch-YOLOv4). Place it in *data/models/yolo_v4/yolov4.pth*.
 - [PedRecNet weights](https://dennisnotes.com/files/pedrec/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth) - place it in *data/models/pedrec/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth*.
-- [EHPI3D weights](https://dennisnotes.com/files/pedrec/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth) - Place it in *models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth*.
+- [EHPI3D weights](https://dennisnotes.com/files/pedrec/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth) - Place it in *data/models/ehpi3d/ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth*.
 
 Not required to run the network but for some experiments / trainings:
 - [Simple Baselines for Human Pose Estimation Weights](https://dennisnotes.com/files/pedrec/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar) - adapted from https://github.com/microsoft/human-pose-estimation.pytorch - place it in data/models/human_pose_baseline/pose_resnet_50_256x192.pth.tar.
+- Intermediate training checkpoints of the stage chain (see Training): `mise run download:checkpoints <stage>` or https://dennisnotes.com/files/pedrec/single_results/experiment_pedrec_<stage>_0.pth, placed in *data/models/pedrec/single_results/*.
 
 ### Datasets
 - If you want to train the network(s) yourself, you need the following datasets:
@@ -59,11 +74,19 @@ Not required to run the network but for some experiments / trainings:
     - [SIM-C01 Train](https://dennisnotes.com/files/pedrec/datasets/SIM-C01/rt_conti_01_train_FIN.pkl)
     - [SIM-C01 Val](https://dennisnotes.com/files/pedrec/datasets/SIM-C01/rt_conti_01_val.pkl)
 
-Download the datasets and place the additional .pkls in the appropriate folders. Update the paths in experiment_path_helper.py and execute one of the experiments in training/. You might need some intermediate weights if you do not start with experiment_pedrec_2d! You can find them at https://dennisnotes.com/files/pedrec/single_results/filename.pth.
+The expected layout below the data root (see `pedrec/training/experiments/experiment_path_helper.py`, every path can be
+overridden there or via the script options):
+
+```
+data/
+  datasets/COCO, Human3.6m/{train,val}, ROMb, RT3DValidate, cvpr10_multiview_pedestrians, Conti01
+  models/yolo_v4, models/pedrec, models/pedrec/single_results (training checkpoints), models/ehpi3d, models/human_pose_baseline
+  demo/
+```
 
 ### Demo files
-- [Some C01 real examples](https://dennisnotes.com/files/pedrec/demo/05070850_9672.m4v) - place it in *data/demo/* or updated paths in demo_actionrec_dev.
-- [Pedestrians crossing a street](https://www.pexels.com/de-de/video/855565/) - place it in *data/demo/* or updated paths in demo_actionrec_dev.
+- [Some C01 real examples](https://dennisnotes.com/files/pedrec/demo/05070850_9672.m4v) - `mise run download:demo` or place it in *data/demo/*.
+- [Pedestrians crossing a street](https://www.pexels.com/de-de/video/855565/) - place it as *data/demo/multi_person_crossing_street.mp4* (the default demo input).
 
 ## Installation tips
 Currently I would recommend to use a PIP environment instead of Anaconda. I tried the (recommended) Anaconda environment for PyTorch various times, but the performance is hugely inferior to the PIP environment on my system(s). Using Anaconda I get about 9FPS on videos with a single human compared to 25FPS on my PIP environment. One thing I noticed is that the performance difference shrinks the more people are in a video, thus with 7+ people the performance of the Anaconda and the PIP environment are almost equal. If someone has an idea what the problem could be, please notify me. Things tested:
@@ -73,15 +96,82 @@ Currently I would recommend to use a PIP environment instead of Anaconda. I trie
 - Usage of opencv-contrib-python-headless instead of the Conda version.
 
 # Demo / Run
-Check out the *demo_actionrec_dev.py* file. It contains examples on how to run the application on videos, image dirs, images and a webcam via the "input providers".
-Example (if you've downloaded the demo videos!):
+`pedrec/demo.py` runs the full pipeline (YoloV4 -> PedRecNet -> tracking -> EHPI3D) on videos, image directories, single
+images or a webcam, with the Qt GUI or headless. Every component can be switched off individually, so the parts of the
+network can be run on their own.
 
-python pedrec/demo_actionrec_dev.py
+| Task | What it does |
+| --- | --- |
+| `mise run demo` | Qt GUI on the default demo video (`--video`, `--images`, `--image`, `--webcam` select the input) |
+| `mise run demo:video <file>` / `demo:images <dir>` / `demo:image <file>` / `demo:webcam [id]` | Qt GUI on the given input |
+| `mise run demo:headless --video in.mp4 --output out.mp4 --json out.json` | Full pipeline without GUI, writes an annotated video / images and all results as JSON |
+| `mise run demo:detector --video in.mp4 --output out.mp4` | YoloV4 detector only |
+| `mise run demo:pose --image person.jpg --output out.jpg --json out.json` | PedRecNet only: 2D / 3D pose + orientation on the full frame (no detector, tracking, actions) |
+| `mise run demo:detector-pose --video in.mp4 --output out.mp4` | Detector + PedRecNet without tracking / actions |
+| `mise run demo:no-action` | GUI without action recognition |
+
+Useful options (see `python pedrec/demo.py --help`): `--no-detector`, `--no-pose`, `--no-tracking`, `--no-action`,
+`--size WxH`, `--cpu`, `--max-frames N`, `--*-weights` to use other checkpoints, `--action-list c01|c01_real`.
+The pipeline itself lives in `pedrec/inference/pipeline.py` (`PedRecPipeline`) and can be embedded in your own code.
+
+# Training
+## PedRecNet
+The PedRecNet is trained as a chain of stages, each one initialized from its predecessor and adding datasets and / or
+loss terms (2D pose -> 3D pose -> joint confidence -> orientation). All stages are described in
+`pedrec/training/experiments/pedrec_stages.py` and trained with one script:
+
+```bash
+mise run train:list                                   # stage table incl. dependencies
+mise run train:pedrec --stage p2d_coco_only           # one stage (needs the pose-resnet weights)
+mise run train:pedrec:chain p2d3d_c_o_h36m_sim_mebow  # all stages up to the published model, skips existing checkpoints
+mise run train:pedrec --stage p2d3d_c_o_h36m_sim_mebow --init-weights my_checkpoint.pth --lr 2e-3 --batch-size 32
+```
+
+Shortcuts for the main milestones: `train:pedrec:2d`, `train:pedrec:3d`, `train:pedrec:conf`, `train:pedrec:orientation`.
+Each stage trains two rounds (frozen backbone, then full network with reduced learning rates), writes the checkpoints
+`experiment_pedrec_<stage>_0_01.pth` / `experiment_pedrec_<stage>_0.pth` and a markdown protocol into
+*data/models/pedrec/single_results/*. Stages without a fixed learning rate run the LR range test first (plot saved next
+to the checkpoint); `--lr` skips it, `--lr-finder` forces it. The demo needs the plain network weights, extract them
+with `mise run tools:extract-net --stage <stage>`.
+
+## EHPI3D (action recognition)
+```bash
+mise run train:ehpi3d:list                     # variants (gt / pred / mixed skeletons x 30 fps / 15 fps / 64 frames)
+mise run train:ehpi3d --variant gt_pred_64frames
+```
+
+The training needs the SIM-C01 skeleton dataframes and the PedRecNet results on them (`*_allframes.pkl`, see
+"Generate own training data"). `mise run train:ehpi3d:data` regenerates the result dataframes with the published
+PedRecNet.
+
+# Evaluation
+| Task | What it does |
+| --- | --- |
+| `mise run eval:pedrec --weights <ckpt>` | 2D / 3D pose, joint confidence and orientation metrics on COCO, SIM and Human3.6m (training validation code) |
+| `mise run eval:h36m --weights <net.pth>` | Per-action MPJPE on Human3.6m |
+| `mise run eval:coco-orientation --weights <net.pth>` | Body orientation accuracy on COCO (MEBOW) |
+| `mise run eval:tud-orientation --weights <net.pth>` | Body orientation accuracy on TUD |
+| `mise run eval:ehpi3d --variants gt_pred_64frames` | Action recognition metrics on SIM-C01 |
+| `mise run results:coco` / `results:h36m` / `results:sim-c01` | Write PedRecNet result dataframes (`--experiments <stages>`) |
+| `mise run export:coco` / `export:h36m` / `export:sim-c01` | Markdown / LaTeX result tables from the result dataframes (as used in `doc/diss_eval`) |
+
+# Project structure
+```
+pedrec/demo.py                  demo / inference CLI (GUI + headless)
+pedrec/inference/pipeline.py    PedRecPipeline: detector -> pose -> tracking -> actions
+pedrec/training/train_pedrec.py PedRecNet training (stages: pedrec/training/experiments/pedrec_stages.py)
+pedrec/training/train_ehpi3d.py EHPI3D training (variants: pedrec/training/experiments/ehpi3d_variants.py)
+pedrec/evaluations/             validation / evaluation scripts
+pedrec/tools/                   dataset generators, result writers, weight tools
+pedrec/networks/                PedRecNet, EHPI3D, YoloV4
+pedrec/datasets/, pedrec/configs/, pedrec/utils/, pedrec/tracking/, pedrec/ui/, pedrec/visualizers/
+doc/                            experiment protocols, evaluation results, architecture review
+```
 
 # Generate own training data
 Check out the panda dataframes (e.g. the rt_conti_01_train_FIN.pkl from SIM-C01 dataset, or the pkls from the H36M dataset). If you provide a dataset of the same structure you can just use the pedrec dataset class.
-You can find some scripts I used to generate the dataframes in tools/datasets/... but I have not tested them in a while.
-The same applies for EHPI3D action recognition data: Check out the dataframes from the rt_conti_01_train_FIN.pkl file! You might want to checkout the notebook *dataset_rtsim_conti01_ehpi* as well. You can find the result files (e.g. the C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_allframes.pkl) at https://dennisnotes.com/files/pedrec/result_dfs/filename.
+You can find some scripts I used to generate the dataframes in `pedrec/tools/datasets/`, but I have not tested them in a while.
+The same applies for EHPI3D action recognition data: Check out the dataframes from the rt_conti_01_train_FIN.pkl file! You might want to checkout the notebook *dataset_rtsim_conti01_ehpi* as well. The PedRecNet result dataframes for SIM-C01 can be regenerated with `mise run train:ehpi3d:data`. You can find the result files (e.g. the C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_allframes.pkl) at https://dennisnotes.com/files/pedrec/result_dfs/filename.
 
 # Notebooks
 I've just pasted a few of my notebooks in the notebooks folder. They are not cleaned up and may contain absolute paths etc. but maybe they help the one or other to understand some concepts / validation results.
