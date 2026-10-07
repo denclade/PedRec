@@ -153,3 +153,33 @@ def test_ehpi3d_training_on_legacy_data(tmp_path, data_dir):
                                             options=TrainingOptions(ema_decay=0.99))
     state = torch.load(checkpoint, weights_only=True)
     assert all(torch.isfinite(v).all() for v in state.values() if v.is_floating_point())
+
+
+def test_v2_stage_initialized_from_v1_chain(tmp_path, monkeypatch):
+    from pedrec.configs.pedrec_net_config import get_arch_preset
+    from pedrec.networks.net_pedrec.pedrec_net_factory import load_arch
+    torch.manual_seed(0)
+    device = torch.device("cpu")
+    stage = get_stage("p2d3d_c_o_h36m_sim_mebow")
+    paths = get_experiment_paths(str(tmp_path))
+    paths.output_dir = str(tmp_path)
+    # only the v1 predecessor checkpoint exists
+    v1 = train_pedrec.PedRecNetMTLWrapper(train_pedrec.PedRecNet(PedRecNet50Config()),
+                                          train_pedrec.PedRecNetLossHead(device))
+    torch.save(v1.state_dict(), os.path.join(tmp_path, f"experiment_pedrec_{stage.init_from}_0.pth"))
+    description = train_pedrec.get_experiment_description(stage, paths, batch_size=2, num_workers=0,
+                                                          arch=get_arch_preset("v2"), augmentation="strong")
+    assert description.coco_train_dataset_cfg.half_body_prob > 0 and description.h36m_val_dataset_cfg.udp
+    loader = DataLoader(SyntheticPoseDataset(), batch_size=2)
+    val_sets = [ValidationSet(name="SYN", loader=DataLoader(SyntheticPoseDataset(), batch_size=2), val_set_cfg=None,
+                              validate_2D=True, validate_3D=True, validate_orientation=True,
+                              validate_pose_conf=True, validate_env_position=False)]
+    monkeypatch.setattr(train_pedrec, "get_train_loader", lambda *a, **k: loader)
+    monkeypatch.setattr(train_pedrec, "get_validation_sets", lambda *a, **k: val_sets)
+    net = train_pedrec.build_net(stage, description, device)
+    train_pedrec.train_stage(stage, description, net, device, cycle_num=0, epochs_round_1=1, epochs_round_2=1,
+                             options=TrainingOptions(ema_decay=0.9))
+    checkpoint = os.path.join(tmp_path, f"experiment_pedrec_v2_{stage.name}_0.pth")
+    assert os.path.isfile(checkpoint)
+    assert load_arch(checkpoint).orientation_head == "biternion"
+    assert "loss_head.log_vars" in torch.load(checkpoint, weights_only=True)

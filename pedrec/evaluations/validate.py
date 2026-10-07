@@ -133,7 +133,8 @@ def validate(net: nn.Module, val_loader: DataLoader,
              validate_3D: bool = True,
              validate_orientation: bool = True,
              validate_pose_conf: bool = True,
-             validate_env_position: bool = True) -> ValidationResults:
+             validate_env_position: bool = True,
+             udp: bool = False) -> ValidationResults:
     start = time.time()
     loss_total = 0.0
     net.eval()
@@ -163,7 +164,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
             centers = labels["center"].cpu().detach().numpy()
             scales = labels["scale"].cpu().detach().numpy()
             rotations = labels["rotation"].cpu().detach().numpy()
-            pose2d_gt = get_total_coords(pose2d_gt, model_input_size, centers, scales, rotations)
+            pose2d_gt = get_total_coords(pose2d_gt, model_input_size, centers, scales, rotations, udp)
 
             pose3d_gt = labels["skeleton_3d"].cpu().detach().numpy()
             pose3d_gt[:, :, :3] = pose3d_gt[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2) # to cm
@@ -172,7 +173,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
 
             if validate_2D:
                 pose2d_pred = preds["skeleton"]
-                pose2d_pred = get_total_coords(pose2d_pred, model_input_size, centers, scales, rotations)
+                pose2d_pred = get_total_coords(pose2d_pred, model_input_size, centers, scales, rotations, udp)
                 pose2d_gts.append(pose2d_gt)
                 pose2d_preds.append(pose2d_pred)
             if validate_3D:

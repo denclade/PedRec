@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 from pedrec.configs.dataset_configs import CocoDatasetConfig, get_coco_dataset_cfg_default
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.datasets.augmentations import half_body_center_scale, color_jitter, random_erasing
 from pedrec.datasets.dataset_helper import get_skeleton_2d_affine_transform
 from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
@@ -208,7 +209,12 @@ class CocoDataset(Dataset):
             center[0] = img.shape[1] - center[0] - 1
             orientation = flip_lr_orientation(orientation)
 
+        udp = getattr(self.cfg, "udp", False)
         if self.mode == DatasetType.TRAIN:
+            if getattr(self.cfg, "half_body_prob", 0) > 0 and random() < self.cfg.half_body_prob:
+                half_body = half_body_center_scale(skeleton, self.input_size)
+                if half_body is not None:
+                    center, scale = half_body
             scale = scale * np.clip(np.random.randn() * self.cfg.scale_factor + 1,
                                     1 - self.cfg.scale_factor,
                                     1 + self.cfg.scale_factor)
@@ -221,7 +227,7 @@ class CocoDataset(Dataset):
                 skeleton = flip_lr_joints(skeleton, img.shape[1])
                 center[0] = img.shape[1] - center[0] - 1
                 orientation = flip_lr_orientation(orientation)
-        trans, trans_inv = get_affine_transforms(center, scale, rotation, self.input_size, add_inv=True)
+        trans, trans_inv = get_affine_transforms(center, scale, rotation, self.input_size, add_inv=True, udp=udp)
         # transx = get_affine_transform(center, scale, rotation, self.input_size)
         skeleton = get_skeleton_2d_affine_transform(skeleton, trans, self.input_size)
         if np.max(skeleton[:, 2]) == 0:  # augmentation screwed up, use unaugmented
@@ -230,7 +236,7 @@ class CocoDataset(Dataset):
             scale = annotations['scale'].copy()
             rotation = 0
             skeleton = annotations['joints'].copy()
-            trans, trans_inv = get_affine_transforms(center, scale, rotation, self.input_size, add_inv=True)
+            trans, trans_inv = get_affine_transforms(center, scale, rotation, self.input_size, add_inv=True, udp=udp)
             # trans = get_affine_transform(center, scale, rotation, self.input_size)
             skeleton = get_skeleton_2d_affine_transform(skeleton, trans, self.input_size)
 
@@ -243,11 +249,16 @@ class CocoDataset(Dataset):
         # if np.max(skeleton[:, 2]) == 0:  # still screwed
         # print(f"No visible skeleton COCO: {index} - {annotations['img_filename']}")
 
-        skeleton[:, 0] /= model_input.shape[1]
-        skeleton[:, 1] /= model_input.shape[0]
+        if self.mode == DatasetType.TRAIN:
+            model_input = color_jitter(model_input, getattr(self.cfg, "color_jitter", 0))
+        offset = 1 if udp else 0  # UDP: pixel centers, normalize by (size - 1)
+        skeleton[:, 0] /= model_input.shape[1] - offset
+        skeleton[:, 1] /= model_input.shape[0] - offset
 
         if self.transform:
             model_input = self.transform(model_input)
+            if self.mode == DatasetType.TRAIN:
+                model_input = random_erasing(model_input, getattr(self.cfg, "random_erasing_prob", 0))
 
         if np.max(skeleton) > 1:
             raise ValueError("WTF")

@@ -14,6 +14,7 @@ import os
 
 import torch
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
@@ -51,11 +52,16 @@ def main(argv=None):
     if args.output is not None:
         output_path = args.output
     elif args.stage is not None:
-        output_path = os.path.join(os.path.dirname(paths.output_dir), f"experiment_pedrec_{args.stage}_{args.cycle}_net.pth")
+        output_path = os.path.join(os.path.dirname(paths.output_dir),
+                                   os.path.basename(mtl_weights).replace(".pth", "_net.pth"))
     else:
         output_path = os.path.splitext(mtl_weights)[0] + "_net.pth"
-    net = PedRecNetMTLWrapper(PedRecNet(PedRecNet50Config()), PedRecNetLossHead(get_device(False)))
+    arch = load_arch(mtl_weights)
+    net = PedRecNetMTLWrapper(PedRecNet(pedrec_config(arch)),
+                              PedRecNetLossHead(get_device(False), weighting=arch.mtl_weighting,
+                                                orientation_head=arch.orientation_head))
     mtl_to_net(net, mtl_weights, output_path)
+    copy_arch(mtl_weights, output_path)
 
 
 if __name__ == "__main__":

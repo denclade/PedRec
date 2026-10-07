@@ -48,15 +48,19 @@ class ExperimentPaths(object):
     ehpi3d_output_dir: str = "data/models/ehpi3d"
     ehpi_videos_dir: str = "data/videos/ehpi_videos"
     ehpi_videos_results_filename: str = "pedrec_p2d3d_c_o_h36m_sim_mebow_0_results.pkl"
+    checkpoint_prefix: str = "experiment_pedrec"  # e.g. experiment_pedrec_v2 for other network architectures
+
+    def get_stage_file_base(self, stage_name: str) -> str:
+        return os.path.join(self.output_dir, f"{self.checkpoint_prefix}_{stage_name}")
 
     def get_stage_checkpoint_path(self, stage_name: str, cycle_num: int = 0, round_suffix: str = None) -> str:
         """
         Path of the (MTL wrapper) checkpoint written by ``train_pedrec.py`` for a training stage.
         """
-        filename = f"experiment_pedrec_{stage_name}_{cycle_num}"
+        filename = f"{self.get_stage_file_base(stage_name)}_{cycle_num}"
         if round_suffix is not None:
             filename += f"_{round_suffix}"
-        return os.path.join(self.output_dir, f"{filename}.pth")
+        return f"{filename}.pth"
 
     def get_stage_protocol_path(self, stage_name: str) -> str:
-        return os.path.join(self.output_dir, f"experiment_pedrec_{stage_name}_protocol.md")
+        return f"{self.get_stage_file_base(stage_name)}_protocol.md"

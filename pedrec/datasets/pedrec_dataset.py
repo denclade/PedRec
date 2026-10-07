@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 from pedrec.configs.dataset_configs import PedRecDatasetConfig, get_h36m_dataset_cfg_default, \
     get_sim_dataset_cfg_default
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.datasets.augmentations import half_body_center_scale, color_jitter, random_erasing
 from pedrec.datasets.dataset_helper import get_skeleton_2d_affine_transform
 from pedrec.datasets.pedrec_df_loader import get_annotations_from_pedrec_df
 from pedrec.models.constants.dataset_constants import DatasetType
@@ -85,8 +86,9 @@ class PedRecDataset(Dataset):
         return orientation
 
     def normalize_skeleton(self, skeleton: np.ndarray):
-        skeleton[:, 0] /= self.model_input_size.width
-        skeleton[:, 1] /= self.model_input_size.height
+        offset = 1 if getattr(self.cfg, "udp", False) else 0  # UDP: pixel centers, normalize by (size - 1)
+        skeleton[:, 0] /= self.model_input_size.width - offset
+        skeleton[:, 1] /= self.model_input_size.height - offset
 
     def normalize_skeleton_3d(self, skeleton_3d: np.ndarray):
         skeleton_3d[:, :3] += self.half_skeleton_range  # move negatives to positive, scale 0-2
@@ -102,10 +104,15 @@ class PedRecDataset(Dataset):
         flip = self.flip_all
         rotation = 0
 
+        udp = getattr(self.cfg, "udp", False)
         if self.mode == DatasetType.TRAIN:
             """
             Randomize augmentation values, TODO: rotation support 4 orientation...
             """
+            if getattr(self.cfg, "half_body_prob", 0) > 0 and random() < self.cfg.half_body_prob:
+                half_body = half_body_center_scale(annotations.skeleton_2d, self.model_input_size)
+                if half_body is not None:
+                    annotations.center, annotations.scale = half_body
             annotations.scale = annotations.scale * np.clip(np.random.randn() * self.cfg.scale_factor + 1,
                                     1 - self.cfg.scale_factor,
                                     1 + self.cfg.scale_factor)
@@ -116,7 +123,7 @@ class PedRecDataset(Dataset):
                                    self.cfg.rotation_factor * 2)
 
         annotations.center = self.get_augmented_center(annotations.center, img_size[0], flip)
-        trans, trans_inv = get_affine_transforms(annotations.center, annotations.scale, rotation, self.model_input_size, add_inv=True)
+        trans, trans_inv = get_affine_transforms(annotations.center, annotations.scale, rotation, self.model_input_size, add_inv=True, udp=udp)
         annotations.skeleton_2d = self.get_augmented_skeleton(annotations.skeleton_2d, img_size[0], trans, flip)
 
         if np.max(annotations.skeleton_2d[:, 2]) == 0:  # augmentation screwed up, use unaugmented data
@@ -124,10 +131,12 @@ class PedRecDataset(Dataset):
             img = img_orig.copy()
             rotation = 0
             flip = False
-            trans, trans_inv = get_affine_transforms(annotations.center, annotations.scale, rotation, self.model_input_size, add_inv=True)
+            trans, trans_inv = get_affine_transforms(annotations.center, annotations.scale, rotation, self.model_input_size, add_inv=True, udp=udp)
             annotations.skeleton_2d = self.get_augmented_skeleton(annotations.skeleton_2d, img_size[0], trans, flip)
 
         model_input = self.get_augmented_img(img, trans, flip)
+        if self.mode == DatasetType.TRAIN:
+            model_input = color_jitter(model_input, getattr(self.cfg, "color_jitter", 0))
         annotations.skeleton_3d = self.get_augmented_skeleton_3d(annotations.skeleton_3d, flip)
         annotations.body_orientation = self.get_augmented_orientation(annotations.body_orientation, flip, rotation)
         annotations.head_orientation = self.get_augmented_orientation(annotations.head_orientation, flip, rotation)
@@ -141,6 +150,8 @@ class PedRecDataset(Dataset):
 
         if self.transform:
             model_input = self.transform(model_input)
+            if self.mode == DatasetType.TRAIN:
+                model_input = random_erasing(model_input, getattr(self.cfg, "random_erasing_prob", 0))
 
         orientation = np.zeros((2, 5), dtype=np.float32)
         orientation[0, :4] = annotations.body_orientation

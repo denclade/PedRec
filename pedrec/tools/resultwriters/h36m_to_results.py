@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
 from pedrec.datasets.pedrec_dataset import PedRecDataset
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
 
@@ -85,9 +86,9 @@ def main(output_dir: str, output_postfix: str, net_cfg, h36m_val, weights_path: 
     ####################################################################################################################
     ############################################ Initialize Network ####################################################
     ####################################################################################################################
-    net = PedRecNet(net_cfg)
-    net.init_weights()
-    initialize_weights_with_same_name_and_shape(net, weights_path, "model.")
+    net = load_pedrec_net(weights_path, device)  # MTL checkpoint or *_net.pth, architecture from the sidecar
+    udp = net.cfg.arch.udp
+    h36m_val.cfg.udp = udp
     net.to(device)
 
     batch_size = 48
@@ -117,10 +118,10 @@ def main(output_dir: str, output_postfix: str, net_cfg, h36m_val, weights_path: 
             # orientation_gts = labels["orientation"].cpu().detach().numpy()
             img_paths = labels["img_path"]
             # img_sizes = labels["img_size"].cpu().detach().numpy().tolist()
-            pose2d_gts = get_total_coords(pose2d_gts, net_cfg.model.input_size, centers, scales, rotations)
+            pose2d_gts = get_total_coords(pose2d_gts, net_cfg.model.input_size, centers, scales, rotations, udp)
             
             pose2d_preds = preds["skeleton"]
-            pose2d_preds = get_total_coords(pose2d_preds, net_cfg.model.input_size, centers, scales, rotations)
+            pose2d_preds = get_total_coords(pose2d_preds, net_cfg.model.input_size, centers, scales, rotations, udp)
             pose3d_preds = preds["skeleton_3d"]
             pose3d_preds[:, :, :3] = (pose3d_preds[:, :, :3] * 3000) - 1500  # to cm
 

@@ -20,6 +20,7 @@ import os
 import numpy as np
 import torch
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
@@ -108,12 +109,14 @@ def main(argv=None):
             verify(net, path, example, atol=1e-3)
 
     if "pedrecnet" in args.models:
-        cfg = PedRecNet50Config()
         weights = args.pedrec_weights or default_paths.pedrec_net_weights(args.data_dir)
-        net = PedRecNetInference(init_pose_model(PedRecNet(cfg), weights, logger, cpu))
+        pose_net = load_pedrec_net(weights, cpu)
+        cfg = pose_net.cfg
+        net = PedRecNetInference(pose_net)
         example = torch.randn(4, 3, cfg.model.input_size.height, cfg.model.input_size.width)
         path = os.path.join(output_dir, "pedrecnet.onnx")
         export(net, example, path, ["pose_2d", "pose_3d", "orientation"], dynamic_batch=True, opset=args.opset)
+        copy_arch(weights, path)
         if not args.no_verify:
             verify(net, path, example, atol=1e-3)
             verify(net, path, torch.randn(1, 3, cfg.model.input_size.height, cfg.model.input_size.width), atol=1e-3)

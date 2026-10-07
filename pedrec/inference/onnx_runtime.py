@@ -49,6 +49,7 @@ class OnnxModule:
             else:
                 selected.append(provider)
         self.session = ort.InferenceSession(path, providers=selected)
+        self.path = path
         self.device = device
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [o.name for o in self.session.get_outputs()]

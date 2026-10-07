@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List, Optional
 
 from torch import nn
 
@@ -31,6 +31,7 @@ class ExperimentDescription(object):
     batch_size: int = 48
     batch_size_validate: int = 48
     num_workers: int = 12
+    dataset_sampling_weights: Optional[Dict[str, float]] = None  # e.g. {'coco': 1, 'h36m': 1, 'sim': 2}
 
     use_train_coco: bool = True
     use_train_sim: bool = True

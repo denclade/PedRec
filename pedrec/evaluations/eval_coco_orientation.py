@@ -16,6 +16,7 @@ import numpy as np
 import torch
 from torchvision import transforms
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.dataset_configs import get_coco_dataset_cfg_default
@@ -58,11 +59,13 @@ def main(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
     dataset_cfg = get_coco_dataset_cfg_default()
     dataset_cfg.use_mebow_orientation = True
+    dataset_cfg.udp = load_arch(pedrecnet_weights).udp
     cfg = PedRecNet50Config()
     device = get_device(not args.cpu)
     val_set = CocoDataset(experiment_paths.coco_dir, DatasetType.VALIDATE, dataset_cfg,
                           cfg.model.input_size, pose_transform)
-    net = init_pose_model(PedRecNet(cfg), pedrecnet_weights, logger, device)
+    net = load_pedrec_net(pedrecnet_weights, device)
+    dataset_cfg.udp = net.cfg.arch.udp
     distances = []
     with torch.no_grad():
         for annotation in val_set:

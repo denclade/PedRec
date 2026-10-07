@@ -121,7 +121,8 @@ def train_round(net: nn.Module, experiment_description: ExperimentDescription,
         train_loss, train_time = train(net, stepper, train_loader, device, get_outputs_loss_func)
         eval_net = ema.module if ema is not None else net
         validation_results = validate_val_sets(eval_net, validation_sets, get_outputs_loss_func, get_gt_pred_func,
-                                               device, experiment_description.net_cfg.model.input_size)
+                                               device, experiment_description.net_cfg.model.input_size,
+                                               udp=experiment_description.net_cfg.arch.udp)
         results = EpochValidationResults(epoch=epoch, train_loss=train_loss, train_time=train_time,
                                          validation_results=validation_results)
         epoch_results.append(results)
@@ -135,7 +136,8 @@ def train_round(net: nn.Module, experiment_description: ExperimentDescription,
 
 ################## Validation Methods ####################
 def validate_val_sets(net, validation_sets: List[ValidationSet], get_outputs_loss_func: Callable,
-                     get_preds_func: Callable, device: torch.device, model_input_size: ImageSize) -> Dict[str, ValidationResults]:
+                     get_preds_func: Callable, device: torch.device, model_input_size: ImageSize,
+                     udp: bool = False) -> Dict[str, ValidationResults]:
     results: Dict[str, ValidationResults] = {}
     for val_set in validation_sets:
         skeleton_3d_range = 0
@@ -147,7 +149,7 @@ def validate_val_sets(net, validation_sets: List[ValidationSet], get_outputs_los
                               validate_orientation=val_set.validate_orientation,
                               validate_pose_conf=val_set.validate_pose_conf,
                               validate_env_position=val_set.validate_env_position,
-                              skeleton_3d_range=skeleton_3d_range)
+                              skeleton_3d_range=skeleton_3d_range, udp=udp)
         results[val_set.name] = val_result
     return results
 

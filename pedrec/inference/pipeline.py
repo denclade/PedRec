@@ -34,14 +34,14 @@ from pedrec.models.constants.action_mappings import ACTION
 from pedrec.models.data_structures import ImageSize
 from pedrec.models.human import Human
 from pedrec.networks.net_pedrec.ehpi_3d_net import Ehpi3DNet
-from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config
 from pedrec.tracking.byte_tracker import ByteTracker
 from pedrec.tracking.human_merger import HumanMerger
 from pedrec.tracking.human_tracker import HumanTracker, bb_tracking, add_undetected_bbs_from_tracking, \
     remove_duplicates
 from pedrec.tracking.one_euro import HumanStateSmoother
 from pedrec.utils.bb_helper import split_human_bbs, get_bb_score
-from pedrec.utils.demo_helper import get_detector, init_pose_model
+from pedrec.utils.demo_helper import get_detector
 from pedrec.utils.ehpi_helper import get_ehpi_from_human_history
 from pedrec.utils.human_helper import get_humans_from_pedrec_detections
 from pedrec.utils.image_content_buffer import ImageContent, ImageContentBuffer
@@ -173,19 +173,24 @@ class YoloV4HumanDetector:
 
 
 class PedRecPoseEstimator:
-    """PedRecNet on a batch of person bbs of one frame."""
+    """PedRecNet on a batch of person bbs of one frame (any architecture variant, see pedrec_net_factory)."""
 
     def __init__(self, weights: str, device: torch.device, runtime: RuntimeConfig, cfg: PedRecNetConfig = None,
-                 onnx_session=None):
-        self.cfg = cfg or PedRecNet50Config()
+                 onnx_session=None, onnx_path: str = None):
         self.device = device
         module = None
         if onnx_session is None:
-            module = init_pose_model(PedRecNet(self.cfg), weights, logger, torch.device("cpu"))
+            module = load_pedrec_net(weights, torch.device("cpu"), cfg.arch if cfg is not None else None)
+            self.cfg = module.cfg
             module = _prepare_module(module, device, runtime)
+        else:
+            self.cfg = cfg or pedrec_config(load_arch(onnx_path) if onnx_path else None)
+        self.udp = self.cfg.arch.udp
         self.run = _Runner(module, device, runtime, onnx_session)
         input_size = self.cfg.model.input_size
-        self._input_scale = torch.tensor([input_size.width, input_size.height], dtype=torch.float32, device=device)
+        offset = 1 if self.udp else 0  # UDP: normalized coordinates refer to (size - 1)
+        self._input_scale = torch.tensor([input_size.width - offset, input_size.height - offset],
+                                         dtype=torch.float32, device=device)
         self._orientation_scale = torch.tensor([np.pi, 2 * np.pi], dtype=torch.float32, device=device)
 
     def __call__(self, frame: torch.Tensor, bbs: Sequence[np.ndarray]) -> Dict[str, np.ndarray]:
@@ -198,7 +203,7 @@ class PedRecPoseEstimator:
         if num == 0:
             return {"skeletons": [], "skeletons_3d": [], "orientations": []}
         input_size = self.cfg.model.input_size
-        _, trans_invs = gpu_ops.get_crop_transforms(bbs, input_size)
+        _, trans_invs = gpu_ops.get_crop_transforms(bbs, input_size, getattr(self, "udp", False))
         trans_invs = torch.from_numpy(trans_invs).to(self.device)
         crops = gpu_ops.crop_affine(frame, trans_invs, input_size)
         outputs = self.run(crops)
@@ -272,9 +277,10 @@ class PedRecPipeline:
                                                 _load_onnx_session(runtime, cfg.data_root, "yolov4", device))
         self.pose_estimator = None
         if cfg.use_pose:
+            onnx_session = _load_onnx_session(runtime, cfg.data_root, "pedrecnet", device)
             self.pose_estimator = PedRecPoseEstimator(
                 cfg.pedrec_weights or default_paths.pedrec_net_weights(cfg.data_root), device, runtime,
-                onnx_session=_load_onnx_session(runtime, cfg.data_root, "pedrecnet", device))
+                onnx_session=onnx_session, onnx_path=getattr(onnx_session, "path", None))
         self.action_recognizer = None
         if cfg.use_action:
             self.action_recognizer = Ehpi3DActionRecognizer(

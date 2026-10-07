@@ -1,6 +1,8 @@
-from typing import List
+from typing import Dict, List
 
-from torch.utils.data import DataLoader, ConcatDataset
+import torch
+
+from torch.utils.data import DataLoader, ConcatDataset, WeightedRandomSampler
 
 from pedrec.datasets.coco_dataset import CocoDataset
 from pedrec.datasets.dataset_helper import worker_init_fn
@@ -15,6 +17,7 @@ from pedrec.training.experiments.experiment_train_helper import get_subsampled_d
 
 def get_train_loader(experiment_description: ExperimentDescription, trans) -> DataLoader:
     train_sets = []
+    train_set_names = []
     if experiment_description.use_train_coco:
         coco_train = CocoDataset(experiment_description.experiment_paths.coco_dir, DatasetType.TRAIN,
                                  experiment_description.coco_train_dataset_cfg,
@@ -22,6 +25,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
         coco_full_length = len(coco_train)
         coco_train = get_subsampled_dataset(coco_train, experiment_description.coco_train_subsampling)
         train_sets.append(coco_train)
+        train_set_names.append("coco")
         experiment_description._train_sets.append(
             DatasetDescription(name="COCO (TRAIN)",
                                subsampling=experiment_description.coco_train_subsampling,
@@ -34,6 +38,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
         tud_full_length = len(tud_train)
         tud_train = get_subsampled_dataset(tud_train, experiment_description.tud_train_subsampling)
         train_sets.append(tud_train)
+        train_set_names.append("tud")
         experiment_description._train_sets.append(
             DatasetDescription(name="TUD (TRAIN)",
                                subsampling=experiment_description.tud_train_subsampling,
@@ -45,6 +50,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                                   DatasetType.TRAIN, experiment_description.sim_train_dataset_cfg,
                                   experiment_description.net_cfg.model.input_size, trans)
         train_sets.append(sim_train_a)
+        train_set_names.append("sim")
         experiment_description._train_sets.append(
             DatasetDescription(name=experiment_description.experiment_paths.sim_train_filename,
                                subsampling=sim_train_a.info.subsampling,
@@ -55,6 +61,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                                   DatasetType.TRAIN, experiment_description.sim_train_dataset_cfg,
                                   experiment_description.net_cfg.model.input_size, trans)
         train_sets.append(sim_train_b)
+        train_set_names.append("sim")
         experiment_description._train_sets.append(
             DatasetDescription(name=experiment_description.experiment_paths.sim_val_filename,
                                subsampling=sim_train_b.info.subsampling,
@@ -66,6 +73,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                                    DatasetType.TRAIN, experiment_description.h36m_train_dataset_cfg,
                                    experiment_description.net_cfg.model.input_size, trans)
         train_sets.append(h36m_train)
+        train_set_names.append("h36m")
         experiment_description._train_sets.append(
             DatasetDescription(name=experiment_description.experiment_paths.h36m_train_filename,
                                subsampling=h36m_train.info.subsampling,
@@ -76,10 +84,28 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
         raise ValueError("No training set! Check experiment config")
 
     train_set = ConcatDataset(train_sets)
-    train_loader = DataLoader(train_set, batch_size=experiment_description.batch_size, shuffle=True, num_workers=experiment_description.num_workers, pin_memory=True,
+    sampler = None
+    if experiment_description.dataset_sampling_weights:
+        sampler = get_dataset_balancing_sampler(train_sets, train_set_names,
+                                                experiment_description.dataset_sampling_weights)
+    train_loader = DataLoader(train_set, batch_size=experiment_description.batch_size, shuffle=sampler is None,
+                              sampler=sampler, num_workers=experiment_description.num_workers, pin_memory=True,
                               persistent_workers=experiment_description.num_workers > 0,
-                              worker_init_fn=worker_init_fn)
+                              worker_init_fn=worker_init_fn, drop_last=True)
     return train_loader
+
+
+def get_dataset_balancing_sampler(train_sets, names: List[str], weights: Dict[str, float]) -> WeightedRandomSampler:
+    """
+    Samples the datasets with the given relative probabilities, independent of their sizes (e.g. so that the large
+    simulation datasets do not dominate COCO). One epoch has as many samples as all datasets together.
+    """
+    sample_weights = []
+    for dataset, name in zip(train_sets, names):
+        weight = weights.get(name, 1.0)
+        sample_weights.append(torch.full((len(dataset),), weight / max(len(dataset), 1), dtype=torch.double))
+    sample_weights = torch.cat(sample_weights)
+    return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
 
 def get_validation_sets(experiment_description: ExperimentDescription, trans) -> List[ValidationSet]:

@@ -17,6 +17,7 @@ import torch
 from sklearn.metrics import average_precision_score, recall_score
 from torchvision import transforms
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net, load_arch, pedrec_config, copy_arch
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.pedrec_net_config import PedRecNet50Config
@@ -130,7 +131,8 @@ def main(argv=None):
 
     # Pose
     pose_cfg = PedRecNet50Config()
-    net = init_pose_model(PedRecNet(cfg), pedrecnet_weights, logger, device)
+    net = load_pedrec_net(pedrecnet_weights, device)
+    udp = net.cfg.arch.udp
     corrects = 0
     distances = []
     bin_gt = {}
@@ -142,7 +144,7 @@ def main(argv=None):
         img = cv2.cvtColor(cv2.imread(annotation["img_path"]), cv2.COLOR_BGR2RGB)
         center, scale = bb_to_center_scale(annotation["bb"], cfg.model.input_size)
         rotation = 0
-        trans, trans_inv = get_affine_transforms(center, scale, rotation, cfg.model.input_size, add_inv=True)
+        trans, trans_inv = get_affine_transforms(center, scale, rotation, cfg.model.input_size, add_inv=True, udp=udp)
         # Crop smaller image of people
         model_input = cv2.warpAffine(
             img,

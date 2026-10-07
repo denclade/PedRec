@@ -83,7 +83,8 @@ def crop_affine(frame: torch.Tensor, trans_invs: torch.Tensor, out_size: ImageSi
     return (crops - mean_t) / std_t
 
 
-def get_crop_transforms(bbs: Sequence[np.ndarray], input_size: ImageSize) -> Tuple[np.ndarray, np.ndarray]:
+def get_crop_transforms(bbs: Sequence[np.ndarray], input_size: ImageSize,
+                        udp: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """
     Affine transforms (frame -> crop and crop -> frame, each Bx2x3) for the human bbs, identical to the transforms
     used during training / in the original inference code (bb_to_center_scale + get_affine_transforms).
@@ -91,7 +92,7 @@ def get_crop_transforms(bbs: Sequence[np.ndarray], input_size: ImageSize) -> Tup
     trans, trans_invs = [], []
     for bb in bbs:
         center, scale = bb_to_center_scale(bb, input_size)
-        t, t_inv = get_affine_transforms(center, scale, 0, input_size, add_inv=True)
+        t, t_inv = get_affine_transforms(center, scale, 0, input_size, add_inv=True, udp=udp)
         trans.append(t)
         trans_invs.append(t_inv)
     return np.asarray(trans, dtype=np.float32), np.asarray(trans_invs, dtype=np.float32)
