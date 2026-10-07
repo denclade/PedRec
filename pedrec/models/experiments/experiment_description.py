@@ -36,6 +36,7 @@ class ExperimentDescription(object):
     use_train_coco: bool = True
     use_train_sim: bool = True
     use_train_h36m: bool = True
+    use_extra_3d: bool = True  # converted additional 3D datasets, if present (pedrec/datasets/extra_3d_datasets.py)
     use_train_tud: bool = False
     coco_train_subsampling: int = 1
     h36m_train_subsampling: int = 10

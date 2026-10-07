@@ -69,6 +69,7 @@ mise install                 # pinned Python 3.14 + uv
 mise run setup               # .venv with PyTorch 2.14 (CUDA 13.0), PyQt6, ...; see below for other CUDA versions
 mise run gpu:info            # check that PyTorch sees the GPU
 mise run download:models     # RT-DETR detector + backbone ImageNet weights (Hugging Face cache)
+mise run download:datasets   # dataset overview, e.g. download:datasets:pedrec / :coco (see Datasets)
 mise run train:all           # train the v2 weights (see above), then:
 mise run demo --video my_video.mp4
 mise run test                # unit tests (no data / GPU needed)
@@ -116,26 +117,43 @@ Hugging Face cache. The v2 weights are trained with this code (`mise run train:a
 - *data/models/ehpi3d/ehpi_stgcn_sim_c01_actionrec_gt_pred_64frames.pth* (action recognition)
 
 ### Datasets
-- If you want to train the network(s) yourself, you need the following datasets:
-  - [COCO (2017)](https://cocodataset.org/#download)
-    - Additionally: [MEBOW body orientation annotations](https://github.com/ChenyanWu/MEBOW) - train_hoe.json and val_hoe.json need to be placed in COCO/annotations
-  - Human3.6m
-    - Additionally: [train/36m_train_pedrec.pkl](https://dennisnotes.com/files/pedrec/datasets/H36M/h36m_train_pedrec.pkl) in h36m_dir/train/ and [*train/36m_val_pedrec.pkl*](https://dennisnotes.com/files/pedrec/datasets/H36M/h36m_val_pedrec.pkl) in h36m_dir/val/
-  - [ROMb (SIM-ROM)](https://dennisnotes.com/files/pedrec/datasets/ROMb.7z)
-  - [RT3DValidate (SIM-Circle)](https://dennisnotes.com/files/pedrec/datasets/RT3DValidate.7z)
-  - [TUD](https://www.mpi-inf.mpg.de/de/departments/computer-vision-and-machine-learning/research/people-detection-pose-estimation-and-tracking/monocular-3d-pose-estimation-and-tracking-by-detection) - cvpr10_multiview_pedestrians
-- For action recognition:
-  - SIM-C01 Pose Data (raw image data not published, but you only require the skeleton dataframe for training!)
-    - [SIM-C01 Train](https://dennisnotes.com/files/pedrec/datasets/SIM-C01/rt_conti_01_train_FIN.pkl)
-    - [SIM-C01 Val](https://dennisnotes.com/files/pedrec/datasets/SIM-C01/rt_conti_01_val.pkl)
+All datasets are expected below `$PEDREC_DATA_DIR/datasets` (default *data/datasets*). `mise run download:datasets`
+prints an overview, the downloads are resumable and skip existing files. Licenses: all datasets are restricted to
+non-commercial research (COCO annotations: CC BY 4.0), check them before use.
+
+| Dataset | Content | Used for | Get it |
+|---|---|---|---|
+| COCO 2017 | 2D, in the wild | PedRecNet 2D / confidence | `mise run download:datasets:coco` |
+| MEBOW | COCO body orientations | PedRecNet orientation | by e-mail, see `mise run download:datasets:info mebow` |
+| Human3.6m | 3D studio (50 fps) | PedRecNet 3D, lifter | registration (`info h36m`), then `download:datasets:pedrec` (dataframes) + `data:h36m:images` |
+| SIM-ROM (ROMb), SIM-Circle (RT3DValidate) | simulated pedestrians, range of motion, orientations | PedRecNet 3D / orientation, lifter | `mise run download:datasets:pedrec` |
+| SIM-C01 | simulated pedestrian actions (dataframes only) | action recognition, lifter | `mise run download:datasets:pedrec` |
+| TUD multiview pedestrians | orientation benchmark | evaluation | `mise run download:datasets:info tud` |
+| **MPI-INF-3DHP** (new) | 3D, 8 actors, green screen + outdoor test set, 14 cameras | PedRecNet 3D (images), lifter | `mise run download:datasets:3dhp --accept-license`, `mise run data:convert:3dhp` |
+| **Fit3D** (new) | fitness exercises with large range of motion, 4 cameras; also HumanSC3D / CHI3D | PedRecNet 3D (images), lifter | registration (`info fit3d`), `mise run data:convert:fit3d` |
+| **AIST++** (new) | dance (jumps, spins, floor moves), 9 views, 10M frames | PedRecNet 3D (images), lifter | `mise run download:datasets:aistpp --accept-terms [--views c01 c05 --max-sequences 300]`, `mise run data:convert:aistpp` |
+| **AMASS** (new) | 40+ hours of mocap as SMPL-H, incl. **MPI_Limits** (joint limits / range of motion) | lifter only (no images) | registration (`info amass`), `mise run data:convert:amass` |
+
+The converters (`pedrec/tools/datasets/convert_*.py`) write PedRec dataframes (`<name>_{train,val}_pedrec.pkl`,
+images `img_<frame>.jpg`, same columns as the H36M / SIM dataframes: 26 joints 2D + 3D in mm relative to the hip,
+`supported` = 0 for joints the dataset does not have) and sequence dataframes for the lifter
+(`<name>_{train,val}_seq.pkl`). As soon as they exist, `train:pedrec` uses them for training and validation
+(disable with `--no-extra-3d`, balance with e.g. `--dataset-weights coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,aistpp=0.5`)
+and `train:lifter` adds the sequences. The new datasets have no orientation labels (orientation loss masked).
+
+Recommendations: AMASS (at least MPI_Limits + CMU) gives the temporal lifter a far larger pose / motion variety than
+H36M + SIM; Fit3D and AIST++ add real images of extreme poses (range of motion) for the 3D head of PedRecNet,
+MPI-INF-3DHP adds outdoor / unusual camera views. BEDLAM (synthetic, many people, 2D + 3D, registration) and
+AthletePose3D (sports, CVPR 2025) are further candidates but not integrated.
 
 The expected layout below the data root (see `pedrec/training/experiments/experiment_path_helper.py`, every path can be
 overridden there or via the script options):
 
 ```
 data/
-  datasets/COCO, Human3.6m/{train,val}, ROMb, RT3DValidate, cvpr10_multiview_pedestrians, Conti01
-  models/pedrec, models/pedrec/single_results (training checkpoints), models/ehpi3d
+  datasets/COCO, Human3.6m/{train,val}, ROMb, RT3DValidate, cvpr10_multiview_pedestrians, Conti01,
+           MPI-INF-3DHP, Fit3D, AIST++, AMASS (optional)
+  models/pedrec, models/pedrec/single_results (training checkpoints), models/ehpi3d, models/body_models/smplh (AMASS)
   demo/
 ```
 

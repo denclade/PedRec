@@ -67,7 +67,8 @@ def get_preds_mtl(outputs):
 
 
 def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, batch_size: int,
-                               num_workers: int, dataset_sampling_weights=None) -> ExperimentDescription:
+                               num_workers: int, dataset_sampling_weights=None,
+                               use_extra_3d: bool = True) -> ExperimentDescription:
     description = ExperimentDescription(
         net_name="PedRecNet v2",
         experiment_name=os.path.basename(experiment_paths.get_stage_file_base(stage.name)),
@@ -75,6 +76,7 @@ def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, bat
         experiment_paths=experiment_paths,
         net_cfg=PedRecNetConfig(),
         dataset_sampling_weights=dataset_sampling_weights,
+        use_extra_3d=use_extra_3d,
         use_train_coco=stage.train_coco,
         use_train_h36m=stage.train_h36m,
         use_train_sim=stage.train_sim,
@@ -382,8 +384,11 @@ def parse_args(argv=None):
     parser.add_argument("--skip-round-1", action="store_true",
                         help="Load the round 1 checkpoint (*_01.pth) instead of training round 1.")
     parser.add_argument("--dataset-weights", default=None,
-                        help="Balance the training datasets, e.g. coco=1,h36m=1,sim=1 (relative sampling "
-                             "probability of each dataset, independent of its size).")
+                        help="Balance the training datasets, e.g. coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,"
+                             "aistpp=0.5 (relative sampling probability of each dataset, independent of its size).")
+    parser.add_argument("--no-extra-3d", action="store_true",
+                        help="Ignore the converted additional 3D datasets (MPI-INF-3DHP, Fit3D, AIST++), which are "
+                             "otherwise used for training and validation as soon as they exist.")
     parser.add_argument("--resume", action="store_true",
                         help="Continue an interrupted training from <output-dir>/experiment_pedrec_v2_<stage>_<cycle>_state.pth.")
     stability = parser.add_argument_group("numerics / stability")
@@ -420,7 +425,8 @@ def main(argv=None):
     description = get_experiment_description(stage, experiment_paths,
                                              batch_size=args.batch_size or stage.batch_size,
                                              num_workers=args.num_workers,
-                                             dataset_sampling_weights=dataset_weights)
+                                             dataset_sampling_weights=dataset_weights,
+                                             use_extra_3d=not args.no_extra_3d)
     init_experiment(description.seed)
     device = get_device(use_gpu=not args.cpu)
     logger.info(f"Training stage '{stage.name}': {stage.description}")

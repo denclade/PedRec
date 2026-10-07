@@ -22,6 +22,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 from torch.optim.lr_scheduler import OneCycleLR
 
 from pedrec.configs import default_paths
+from pedrec.datasets.extra_3d_datasets import EXTRA_3D_DATASETS
 from pedrec.datasets.pose_sequence_dataset import PoseSequenceDataset
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter, SKELETON_3D_RANGE
@@ -58,6 +59,12 @@ def get_dataset_specs(paths) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str
     for name, df_path, _ in train + val:
         if df_path is None:
             logger.warning(f"{name}: dataframe not found, skipped")
+    for extra in EXTRA_3D_DATASETS:  # converted additional datasets (sequences), if present
+        for split, specs in (("train", train), ("val", val)):
+            path = extra.path(paths.datasets_dir, split, "seq")
+            if path is not None:
+                specs.append((f"{extra.title}" + (" val" if split == "val" else ""), path, None))
+                logger.info(f"Additional 3D dataset {extra.title} ({split}): {path}")
     return [s for s in train if s[1] is not None], [s for s in val if s[1] is not None]
 
 

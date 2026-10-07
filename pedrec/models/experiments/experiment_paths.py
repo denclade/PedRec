@@ -31,6 +31,7 @@ class ExperimentPaths(object):
     ehpi3d_output_dir: str = "data/models/ehpi3d"
     ehpi_videos_dir: str = "data/videos/ehpi_videos"
     ehpi_videos_results_filename: str = "pedrec_v2_results.pkl"  # written by ehpi_dataset_vids_to_dataframe.py
+    datasets_dir: str = "data/datasets"  # additional 3D datasets (pedrec/datasets/extra_3d_datasets.py)
     checkpoint_prefix: str = "experiment_pedrec_v2"  # the published v1 chain uses "experiment_pedrec"
 
     def get_stage_file_base(self, stage_name: str) -> str:

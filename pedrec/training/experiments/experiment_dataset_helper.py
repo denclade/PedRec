@@ -1,3 +1,5 @@
+import logging
+import os
 from typing import Dict, List
 
 import torch
@@ -5,7 +7,9 @@ import torch
 from torch.utils.data import DataLoader, ConcatDataset, WeightedRandomSampler
 
 from pedrec.datasets.coco_dataset import CocoDataset
+from pedrec.configs.dataset_configs import get_h36m_dataset_cfg_default
 from pedrec.datasets.dataset_helper import worker_init_fn
+from pedrec.datasets.extra_3d_datasets import EXTRA_3D_DATASETS
 from pedrec.datasets.pedrec_dataset import PedRecDataset
 from pedrec.datasets.tud_dataset import TudDataset
 from pedrec.models.constants.dataset_constants import DatasetType
@@ -13,6 +17,8 @@ from pedrec.models.experiments.dataset_description import DatasetDescription
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.validation_set_model import ValidationSet
 from pedrec.training.experiments.experiment_train_helper import get_subsampled_dataset
+
+logger = logging.getLogger(__name__)
 
 
 def get_train_loader(experiment_description: ExperimentDescription, trans) -> DataLoader:
@@ -80,6 +86,20 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                                full_length=h36m_train.info.full_length,
                                used_length=h36m_train.info.used_length))
 
+    if experiment_description.use_extra_3d:
+        for extra in EXTRA_3D_DATASETS:
+            path = extra.path(experiment_description.experiment_paths.datasets_dir, "train", "pedrec")
+            if not extra.has_images or path is None:
+                continue
+            dataset = PedRecDataset(os.path.dirname(path), os.path.basename(path), DatasetType.TRAIN,
+                                    get_extra_3d_dataset_cfg(), experiment_description.net_cfg.model.input_size, trans)
+            train_sets.append(dataset)
+            train_set_names.append(extra.name)
+            experiment_description._train_sets.append(
+                DatasetDescription(name=f"{extra.title} (TRAIN)", subsampling=dataset.info.subsampling,
+                                   full_length=dataset.info.full_length, used_length=dataset.info.used_length))
+            logger.info(f"Additional 3D dataset {extra.title}: {dataset.info.used_length} training samples")
+
     if len(train_sets) == 0:
         raise ValueError("No training set! Check experiment config")
 
@@ -93,6 +113,13 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                               persistent_workers=experiment_description.num_workers > 0,
                               worker_init_fn=worker_init_fn, drop_last=True)
     return train_loader
+
+
+def get_extra_3d_dataset_cfg(subsample: int = 1):
+    """Additional 3D datasets: like Human3.6m (images img_<id>.jpg, no rotation augmentation of the 3D labels)."""
+    cfg = get_h36m_dataset_cfg_default()
+    cfg.subsample = subsample
+    return cfg
 
 
 def get_dataset_balancing_sampler(train_sets, names: List[str], weights: Dict[str, float]) -> WeightedRandomSampler:
@@ -190,4 +217,22 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                subsampling=h36m_val.info.subsampling,
                                full_length=h36m_val.info.full_length,
                                used_length=h36m_val.info.used_length))
+    if experiment_description.use_extra_3d:
+        for extra in EXTRA_3D_DATASETS:
+            path = extra.path(experiment_description.experiment_paths.datasets_dir, "val", "pedrec")
+            if not extra.has_images or path is None:
+                continue
+            val_cfg = get_extra_3d_dataset_cfg(extra.val_subsample)
+            dataset = PedRecDataset(os.path.dirname(path), os.path.basename(path), DatasetType.VALIDATE, val_cfg,
+                                    experiment_description.net_cfg.model.input_size, trans)
+            loader = DataLoader(dataset, batch_size=experiment_description.batch_size_validate, shuffle=False,
+                                num_workers=experiment_description.num_workers, pin_memory=True,
+                                persistent_workers=experiment_description.num_workers > 0,
+                                worker_init_fn=worker_init_fn)
+            validation_sets.append(ValidationSet(name=extra.title, loader=loader, val_set_cfg=val_cfg,
+                                                 validate_2D=True, validate_3D=experiment_description.validate_3d_h36m,
+                                                 validate_pose_conf=False, validate_env_position=False))
+            experiment_description._val_sets.append(
+                DatasetDescription(name=f"{extra.title} (VAL)", subsampling=dataset.info.subsampling,
+                                   full_length=dataset.info.full_length, used_length=dataset.info.used_length))
     return validation_sets

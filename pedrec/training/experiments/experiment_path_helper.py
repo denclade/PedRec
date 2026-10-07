@@ -33,5 +33,6 @@ def get_experiment_paths(data_root: str = None) -> ExperimentPaths:
 
         ehpi3d_output_dir=os.path.join(models, "ehpi3d"),
         ehpi_videos_dir=os.path.join(root, "videos", "ehpi_videos"),
+        datasets_dir=datasets,
     )
 
