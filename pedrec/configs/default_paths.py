@@ -23,9 +23,10 @@ def data_path(*parts: str, data_root: str = None) -> str:
     return os.path.join(get_data_root(data_root), *parts)
 
 
-# Weights (see README): the PedRecNet v2 and the ST-GCN action recognition are trained with this code base, the
-# detector (RT-DETRv2) is loaded from the Hugging Face hub / cache.
-PEDREC_NET_WEIGHTS = os.path.join("models", "pedrec", "experiment_pedrec_v2_p2d3d_c_o_h36m_sim_mebow_0_net.pth")
+# Weights (see README): PedRecNet v2, the temporal 3D lifter and the ST-GCN action recognition are trained with this
+# code base, the detector (RT-DETRv2) is loaded from the Hugging Face hub / cache.
+PEDREC_NET_WEIGHTS = os.path.join("models", "pedrec", "experiment_pedrec_v2_p2d3d_c_o_0_net.pth")
+LIFTER_WEIGHTS = os.path.join("models", "pedrec", "pedrec_v2_lifter.pth")
 EHPI3D_WEIGHTS = os.path.join("models", "ehpi3d", "ehpi_stgcn_sim_c01_actionrec_gt_pred_64frames.pth")
 RTDETR_MODEL = "PekingU/rtdetr_v2_r18vd"
 
@@ -39,6 +40,10 @@ EHPI3D_CHECKPOINT_DIR = os.path.join("models", "ehpi3d")
 
 def pedrec_net_weights(data_root: str = None) -> str:
     return data_path(PEDREC_NET_WEIGHTS, data_root=data_root)
+
+
+def lifter_weights(data_root: str = None) -> str:
+    return data_path(LIFTER_WEIGHTS, data_root=data_root)
 
 
 def ehpi3d_weights(data_root: str = None) -> str:

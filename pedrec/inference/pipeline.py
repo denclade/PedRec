@@ -25,7 +25,7 @@ import torch
 
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.inference import gpu_ops
 from pedrec.models.constants.action_mappings import ACTION
 from pedrec.models.data_structures import ImageSize
@@ -341,7 +341,7 @@ class PedRecPipeline:
             if self.tracker is not None:
                 self.smooth(humans)
         else:
-            empty_skeleton = np.zeros((PedRecNet50Config().model.num_joints, 3), dtype=np.float32)
+            empty_skeleton = np.zeros((PedRecNetConfig().model.num_joints, 3), dtype=np.float32)
             humans = [Human(bb=bb, skeleton_2d=empty_skeleton.copy(), skeleton_3d=None, orientation=None, uid=-1)
                       for bb in human_bbs]
 

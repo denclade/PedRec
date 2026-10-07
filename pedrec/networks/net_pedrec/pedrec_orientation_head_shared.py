@@ -8,15 +8,14 @@ from pedrec.configs.pedrec_net_config import PedRecNetConfig
 
 class PedRecOrientationsHead(nn.Module):
     """
-    Body and head orientation from the pooled backbone features and the (detached) 3D pose.
+    Body and head orientation from the pooled stride 32 backbone features and the (detached) 3D pose.
 
     Each orientation is regressed as (cos, sin) of theta and phi (biternion, continuous at 0 / 360 degrees). Returns
     B x 2 (body, head) x 2 (theta / pi, phi / 2pi) and the raw theta / phi vectors (B x 2 x 2) for the loss.
     """
 
-    def __init__(self, cfg: PedRecNetConfig, in_channels: int = None, pose_size: int = 256):
+    def __init__(self, cfg: PedRecNetConfig, in_channels: int, pose_size: int = 256):
         super(PedRecOrientationsHead, self).__init__()
-        in_channels = in_channels or 512 * cfg.layer.block.expansion
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.pose_mlp = nn.Sequential(nn.Linear(cfg.model.num_joints * 3, pose_size), nn.ReLU(inplace=True),
                                       nn.Linear(pose_size, pose_size), nn.ReLU(inplace=True))

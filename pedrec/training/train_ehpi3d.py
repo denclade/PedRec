@@ -61,7 +61,7 @@ def get_train_loader(experiment_paths: ExperimentPaths, batch_size: int, num_wor
                                       pedrec_cfg,
                                       action_list,
                                       ehpi_transform,
-                                      pose_results_file=experiment_paths.sim_c01_results_filename)
+                                      pose_results_file=experiment_paths.sim_c01_lifted_results_filename)
     train_set = sim_train
     if vid_cfg is not None:
         ehpi_vid_dataset = VideoActionDataset(experiment_paths.ehpi_videos_dir,

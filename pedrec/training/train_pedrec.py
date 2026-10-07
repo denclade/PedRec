@@ -1,15 +1,12 @@
 """
-Training of the PedRecNet (v2) along the stage chain of the original experiments
-(``pedrec.training.experiments.pedrec_stages``):
+Training of PedRecNet v2 along the stage chain (``pedrec.training.experiments.pedrec_stages``):
 
-    python pedrec/training/train_pedrec.py --stage p2d3d_c_o_h36m_sim_mebow
+    python pedrec/training/train_pedrec.py --stage p2d_c       # ImageNet backbone -> 2D pose + joint confidence
+    python pedrec/training/train_pedrec.py --stage p2d3d_c_o   # + 3D pose + orientation (demo model)
 
-Checkpoints are written as ``experiment_pedrec_v2_<stage>_<cycle>.pth``. If the v2 checkpoint of the predecessor stage
-does not exist, the published v1 checkpoint ``experiment_pedrec_<stage>_0.pth`` is used for the initialization
-(backbone, decoder and pose heads are identical), so the v2 network is fine-tuned from the published chain.
-
-Run ``--list`` to see all stages and their dependencies. Dataset and checkpoint paths are derived from the data root
-(``--data-dir`` or the ``PEDREC_DATA_DIR`` environment variable, default ``data``).
+Checkpoints are written as ``experiment_pedrec_v2_<stage>_<cycle>.pth``. Each stage trains two rounds: everything but
+the backbone, then the full network. Run ``--list`` to see the stages. Dataset and checkpoint paths are derived from
+the data root (``--data-dir`` or the ``PEDREC_DATA_DIR`` environment variable, default ``data``).
 """
 import argparse
 import logging
@@ -28,21 +25,20 @@ import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import OneCycleLR
 
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.experiment_round_description import ExperimentRoundDescription
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
 from pedrec.networks.net_pedrec.pedrec_net_mtl_wrapper import PedRecNetMTLWrapper
 from pedrec.training.experiments.experiment_dataset_helper import get_validation_sets, get_train_loader
-from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape, \
-    initialize_pose_resnet
+from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
 from pedrec.training.experiments.experiment_log_helper import get_experiment_protocol, save_log
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
 from pedrec.training.experiments.checkpoint_selection import BestEpochTracker
 from pedrec.training.experiments.experiment_train_helper import init_experiment, train_round, get_outputs_loss_mtl
 from pedrec.training.experiments.train_stepper import TrainingOptions, TrainStepper, steps_per_epoch
 from pedrec.training.experiments.pedrec_stages import PedRecTrainingStage, get_stage, get_stage_chain, \
-    format_stage_table, POSE_RESNET_INIT, STAGES, DEFAULT_STAGE
+    format_stage_table, IMAGENET_INIT, STAGES, DEFAULT_STAGE
 from pedrec.utils.torch_utils.mtl_lr_finder import MTLLRFinder
 from pedrec.utils.torch_utils.torch_helper import get_device, split_no_wd_params
 
@@ -77,18 +73,15 @@ def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, bat
         experiment_name=os.path.basename(experiment_paths.get_stage_file_base(stage.name)),
         initialization_notes=f"Initialized from {stage.init_from}",
         experiment_paths=experiment_paths,
-        net_cfg=PedRecNet50Config(),
+        net_cfg=PedRecNetConfig(),
         dataset_sampling_weights=dataset_sampling_weights,
         use_train_coco=stage.train_coco,
         use_train_h36m=stage.train_h36m,
         use_train_sim=stage.train_sim,
-        use_train_tud=stage.train_tud,
-        use_val_tud=stage.val_tud,
         validate_3d_sim=stage.validate_3d,
         validate_3d_h36m=stage.validate_3d,
         validate_orientation_sim=stage.validate_orientation,
         validate_orientation_coco=stage.validate_orientation,
-        validate_orientation_tud=stage.validate_orientation and stage.val_tud,
         validate_joint_conf_sim=stage.validate_joint_conf,
         validate_joint_conf_coco=stage.validate_joint_conf,
         validate_joint_conf_h36m=stage.validate_joint_conf,
@@ -107,7 +100,8 @@ def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, bat
 
 def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, device: torch.device,
               init_weights_path: str = None) -> PedRecNetMTLWrapper:
-    net = PedRecNet(description.net_cfg)
+    pretrained = init_weights_path is None and stage.init_from == IMAGENET_INIT
+    net = PedRecNet(description.net_cfg, pretrained_backbone=pretrained)
     net.init_weights()
     loss_head = PedRecNetLossHead(device,
                                   use_p3d_loss=stage.use_p3d_loss,
@@ -119,40 +113,30 @@ def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, de
     if init_weights_path is not None:
         logger.info(f"Initializing from {init_weights_path}")
         initialize_weights_with_same_name_and_shape(net, init_weights_path)
-    elif stage.init_from == POSE_RESNET_INIT:
-        logger.info(f"Initializing from pose-resnet weights {paths.pose_resnet_weights_path}")
-        initialize_pose_resnet(net, paths.pose_resnet_weights_path)
+    elif pretrained:
+        logger.info(f"Backbone initialized with the ImageNet weights of {description.net_cfg.model.backbone}")
     else:
         predecessor = paths.get_stage_checkpoint_path(stage.init_from)
         if not os.path.isfile(predecessor):
-            # start from the published (v1) chain: backbone, decoder and pose heads are reused, the new orientation
-            # and confidence heads keep their initialization
-            v1_predecessor = os.path.join(paths.output_dir, f"experiment_pedrec_{stage.init_from}_0.pth")
-            if os.path.isfile(v1_predecessor):
-                logger.info(f"No v2 checkpoint for '{stage.init_from}', initializing from the v1 checkpoint")
-                predecessor = v1_predecessor
-        if not os.path.isfile(predecessor):
             raise FileNotFoundError(
                 f"Checkpoint of predecessor stage '{stage.init_from}' not found: {predecessor}. "
-                f"Train it first (python pedrec/training/train_pedrec.py --stage {stage.init_from}) or "
-                f"download it (see README) or pass --init-weights.")
+                f"Train it first (python pedrec/training/train_pedrec.py --stage {stage.init_from}) "
+                f"or pass --init-weights.")
         logger.info(f"Initializing from predecessor stage checkpoint {predecessor}")
         initialize_weights_with_same_name_and_shape(net, predecessor)
-    if stage.reinit_orientation_head:
-        net.model.head_orientation.init_weights()
     net.to(device)
 
     description.net_layer_names = [
-        "net.model.feature_extractor",
-        "net.model.conv_transpose_shared",
+        "net.model.backbone",
+        "net.model.neck",
         "net.model.head_pose_2d",
         "net.model.head_pose_3d",
         "net.model.head_orientation",
         "net.model.head_conf"
     ]
     description.net_layers = [
-        net.model.feature_extractor,
-        net.model.conv_transpose_shared,
+        net.model.backbone,
+        net.model.neck,
         net.model.head_pose_2d,
         net.model.head_pose_3d,
         net.model.head_orientation,
@@ -186,17 +170,17 @@ def find_learning_rate(net, params, train_loader, device, output_path: str) -> f
     return suggested_lr
 
 
-def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, feature_extractor_divisor: float = 1.0,
+def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, backbone_divisor: float = 1.0,
                 head_divisor: float = 1.0):
     """
     One max lr per parameter group (two groups per layer: with / without weight decay, plus the sigmas).
     Heads whose loss is disabled get lr 0.
     """
-    fe = base_lr / feature_extractor_divisor
+    backbone = base_lr / backbone_divisor
     head = base_lr / head_divisor
     return [
-        fe, fe,  # feature extractor
-        head, head,  # conv_transpose_shared
+        backbone, backbone,  # backbone
+        head, head,  # neck
         head, head,  # pose 2d
         head if stage.use_p3d_loss else 0, head if stage.use_p3d_loss else 0,  # pose 3d
         head if stage.use_orientation_loss else 0, head if stage.use_orientation_loss else 0,  # orientation
@@ -289,10 +273,12 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
 
 
 def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, net, device: torch.device,
-                cycle_num: int, epochs_round_1: int, epochs_round_2: int, lr: float = None,
+                cycle_num: int, epochs_round_1: int = None, epochs_round_2: int = None, lr: float = None,
                 force_lr_finder: bool = False, skip_round_1: bool = False, options: TrainingOptions = None,
                 resume: bool = False):
     options = options or TrainingOptions()
+    epochs_round_1 = stage.epochs_round_1 if epochs_round_1 is None else epochs_round_1
+    epochs_round_2 = stage.epochs_round_2 if epochs_round_2 is None else epochs_round_2
     paths = description.experiment_paths
     os.makedirs(paths.output_dir, exist_ok=True)
     stage_state = StageState(f"{paths.get_stage_file_base(stage.name)}_{cycle_num}_state.pth")
@@ -336,7 +322,7 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
     resume_round = stage_state.loaded["round"] if stage_state.loaded is not None else 0
     best_checkpoint = f"{paths.get_stage_file_base(stage.name)}_{cycle_num}_best.pth"
 
-    # Round 1: frozen feature extractor, full lr on the heads
+    # Round 1: frozen backbone, full lr on the neck and heads
     round_1_checkpoint = paths.get_stage_checkpoint_path(stage.name, cycle_num, round_suffix="01")
     if skip_round_1 and stage_state.loaded is None:
         logger.info(f"Skipping round 1, loading {round_1_checkpoint}")
@@ -347,15 +333,16 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
         run_round(0, net, description, params,
                   max_lrs=get_max_lrs(stage, description.suggested_lr),
                   epochs=epochs_round_1,
-                  frozen_layers=[net.model.feature_extractor],
+                  frozen_layers=[net.model.backbone],
                   train_loader=train_loader, validation_sets=validation_sets, device=device,
                   checkpoint_path=round_1_checkpoint, options=options, ema=ema, stage_state=stage_state,
                   best_checkpoint_path=best_checkpoint)
         stage_state.loaded = None
 
     # Round 2: everything trainable with reduced lr
+    backbone_divisor, head_divisor = stage.round_2_lr_divisors
     run_round(1, net, description, params,
-              max_lrs=get_max_lrs(stage, description.suggested_lr, feature_extractor_divisor=20, head_divisor=10),
+              max_lrs=get_max_lrs(stage, description.suggested_lr, backbone_divisor, head_divisor),
               epochs=epochs_round_2,
               frozen_layers=[],
               train_loader=train_loader, validation_sets=validation_sets, device=device,
@@ -381,10 +368,12 @@ def parse_args(argv=None):
                         help="Checkpoint / protocol output directory (default: <data-dir>/models/pedrec/single_results).")
     parser.add_argument("--init-weights", default=None,
                         help="Explicit checkpoint to initialize from instead of the predecessor stage checkpoint.")
-    parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: stage default, 48).")
+    parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: stage default, 64).")
     parser.add_argument("--num-workers", type=int, default=12, help="DataLoader workers (default: 12).")
-    parser.add_argument("--epochs-round-1", type=int, default=10, help="Epochs with frozen backbone (default: 10).")
-    parser.add_argument("--epochs-round-2", type=int, default=5, help="Epochs with full network (default: 5).")
+    parser.add_argument("--epochs-round-1", type=int, default=None,
+                        help="Epochs with frozen backbone (default: stage default, see --list).")
+    parser.add_argument("--epochs-round-2", type=int, default=None,
+                        help="Epochs with the full network (default: stage default, see --list).")
     parser.add_argument("--lr", type=float, default=None, help="Base learning rate, skips the LR range test.")
     parser.add_argument("--lr-finder", action="store_true",
                         help="Always run the LR range test, even if the stage defines a fixed lr.")

@@ -2,57 +2,54 @@ import torch
 import torch.nn as nn
 
 from pedrec.configs.pedrec_net_config import PedRecNetConfig
-from pedrec.networks.net_pedrec.pedrec_conv_transpose_base import PedRecConvTransposeBase
+from pedrec.networks.net_pedrec.pedrec_backbone import PedRecBackbone, PedRecNeck
 from pedrec.networks.net_pedrec.pedrec_orientation_head_shared import PedRecOrientationsHead
 from pedrec.networks.net_pedrec.pedrec_pose_conf_head_heatmap import PedRecPoseConfHeadHeatmap
-from pedrec.networks.net_pedrec.pedrec_pose_head_2d import PedRecPose2DHead
-from pedrec.networks.net_pedrec.pedrec_pose_head_3d import PedRecPose3DHead
-from pedrec.networks.net_resnet.resnet_feature_extractor import ResNetHeadless
+from pedrec.networks.net_pedrec.pedrec_pose_heads import PedRecPose2DHead, PedRecPose3DHead
 from pedrec.utils.torch_utils.loss_functions import Pose2DL1Loss, Pose3DL1Loss, BiternionLoss, JointConfLogitsLoss
 
 
 class PedRecNet(nn.Module):
     """
-    PedRecNet v2: ResNet-50 backbone with a shared deconvolution decoder and heads for 2D pose, 3D pose (heatmap +
-    depth map with soft-argmax), joint confidence (heatmap statistics) and body / head orientation (biternion).
+    PedRecNet v2: HGNetV2-B3 backbone, FPN style neck to stride 4 and heads for 2D pose, 3D pose (heatmap + depth map
+    with soft-argmax), joint confidence (heatmap statistics) and body / head orientation (biternion).
 
     Outputs (in this order):
       0 pose_coords_2d  B x J x 3 (x, y normalized to the input (UDP: by size - 1), joint confidence)
       1 pose_coords_3d  B x J x 4 (x, y, z normalized to the 3D range, joint confidence)
       2 orientations    B x 2 x 2 (body / head; theta / pi, phi / 2pi)
-      3 pose_map_2d, 4 pose_map_3d (heatmap logits)
+      3 pose_map_2d, 4 pose_map_3d (heatmap logits, B x J x 64 x 48)
       5 theta vectors, 6 phi vectors (B x 2 x 2, (cos, sin) for body / head)
       7 joint confidence logits (B x J)
-
-    The backbone, decoder and pose heads have the same layout as the published PedRecNet (v1), so training can start
-    from the v1 checkpoints.
     """
 
-    def __init__(self, cfg: PedRecNetConfig):
+    def __init__(self, cfg: PedRecNetConfig, pretrained_backbone: bool = False):
         super(PedRecNet, self).__init__()
         self.cfg = cfg
-        self.feature_extractor = ResNetHeadless(cfg.layer.block, cfg.layer.layers)
-        self.conv_transpose_shared = PedRecConvTransposeBase(cfg, self.feature_extractor.inplanes, num_heads=2)
-        self.head_pose_2d = PedRecPose2DHead(cfg, self.conv_transpose_shared.deconv_heads[0])
-        self.head_pose_3d = PedRecPose3DHead(cfg, self.conv_transpose_shared.deconv_heads[1])
-        self.head_orientation = PedRecOrientationsHead(cfg)
+        model = cfg.model
+        self.backbone = PedRecBackbone(cfg, pretrained=pretrained_backbone)
+        self.neck = PedRecNeck(self.backbone.channels, model.neck_channels, model.head_channels)
+        self.head_pose_2d = PedRecPose2DHead(model.head_channels, model.num_joints)
+        self.head_pose_3d = PedRecPose3DHead(model.head_channels, model.num_joints)
+        self.head_orientation = PedRecOrientationsHead(cfg, in_channels=self.backbone.channels[-1])
         self.head_conf = PedRecPoseConfHeadHeatmap(cfg)
 
     def forward(self, x):
-        x = self.feature_extractor(x)
-        x_deconv = self.conv_transpose_shared(x)
-        pose_coords_2d, pose_map_2d = self.head_pose_2d(x_deconv)
-        pose_coords_3d, pose_map_3d = self.head_pose_3d(x_deconv)
+        features = self.backbone(x)
+        x_neck = self.neck(features)
+        pose_coords_2d, pose_map_2d = self.head_pose_2d(x_neck)
+        pose_coords_3d, pose_map_3d = self.head_pose_3d(x_neck)
         pose_conf, conf_logits = self.head_conf(pose_map_2d, pose_map_3d)
         pose_conf = torch.unsqueeze(pose_conf, dim=2)
         pose_coords_2d = torch.cat([pose_coords_2d, pose_conf.to(pose_coords_2d.dtype)], dim=2)
         pose_coords_3d = torch.cat([pose_coords_3d, pose_conf.to(pose_coords_3d.dtype)], dim=2)
-        orientations, theta_vectors, phi_vectors = self.head_orientation(x, pose_coords_3d)
+        orientations, theta_vectors, phi_vectors = self.head_orientation(features[-1], pose_coords_3d)
         return (pose_coords_2d, pose_coords_3d, orientations, pose_map_2d, pose_map_3d, theta_vectors, phi_vectors,
                 conf_logits)
 
     def init_weights(self):
-        self.conv_transpose_shared.init_weights()
+        """Initializes everything except the (ImageNet pretrained) backbone."""
+        self.neck.init_weights()
         self.head_pose_2d.init_weights()
         self.head_pose_3d.init_weights()
         self.head_orientation.init_weights()

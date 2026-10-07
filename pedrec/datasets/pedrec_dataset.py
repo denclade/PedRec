@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 from pedrec.configs.dataset_configs import PedRecDatasetConfig, get_h36m_dataset_cfg_default, \
     get_sim_dataset_cfg_default
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.datasets.augmentations import half_body_center_scale, color_jitter, random_erasing
 from pedrec.datasets.dataset_helper import get_skeleton_2d_affine_transform
 from pedrec.datasets.pedrec_df_loader import get_annotations_from_pedrec_df
@@ -173,7 +173,7 @@ class PedRecDataset(Dataset):
 
 #
 if __name__ == "__main__":
-    cfg = PedRecNet50Config()
+    cfg = PedRecNetConfig()
     dataset_cfg = get_sim_dataset_cfg_default()
     dataset_root = "data/datasets/Human3.6m/train/"
     dataset_df_filename = "h36m_train_pedrec.pkl"

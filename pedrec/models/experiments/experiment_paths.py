@@ -9,7 +9,6 @@ class ExperimentPaths(object):
     Use ``pedrec.training.experiments.experiment_path_helper.get_experiment_paths`` to create an instance
     based on the data root (``PEDREC_DATA_DIR``).
     """
-    pose_resnet_weights_path: str
     output_dir: str
     coco_dir: str
     tud_dir: str
@@ -23,13 +22,15 @@ class ExperimentPaths(object):
     sim_c01_val_dir: str
     sim_c01_val_filename: str
     sim_c01_val_results_filename: str
+    sim_c01_lifted_results_filename: str  # with the 3D poses of the temporal lifter, input of the action recognition
+    sim_c01_val_lifted_results_filename: str
     sim_train_filename: str = "rt_rom_01b.pkl"
     sim_val_filename: str = "rt_validate_3d.pkl"
     h36m_val_filename: str = "h36m_val_pedrec.pkl"
     h36m_train_filename: str = "h36m_train_pedrec.pkl"
     ehpi3d_output_dir: str = "data/models/ehpi3d"
     ehpi_videos_dir: str = "data/videos/ehpi_videos"
-    ehpi_videos_results_filename: str = "pedrec_p2d3d_c_o_h36m_sim_mebow_0_results.pkl"
+    ehpi_videos_results_filename: str = "pedrec_v2_results.pkl"  # written by ehpi_dataset_vids_to_dataframe.py
     checkpoint_prefix: str = "experiment_pedrec_v2"  # the published v1 chain uses "experiment_pedrec"
 
     def get_stage_file_base(self, stage_name: str) -> str:

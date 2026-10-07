@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 
 from pedrec.configs.dataset_configs import get_tud_dataset_cfg_default, \
     TudDatasetConfig
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.models.constants.sample_method import SAMPLE_METHOD
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
@@ -182,7 +182,7 @@ class TudDataset(Dataset):
         return annotations
 
 if __name__ == "__main__":
-    cfg = PedRecNet50Config()
+    cfg = PedRecNetConfig()
     dataset_cfg = get_tud_dataset_cfg_default()
     dataset_cfg.subsample = 1
     dataset_cfg.subsampling_strategy = SAMPLE_METHOD

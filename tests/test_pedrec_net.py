@@ -1,11 +1,11 @@
-"""PedRecNet v2 heads, losses, multi task weighting, v1 initialization and UDP; random weights on the CPU."""
+"""PedRecNet v2 heads, losses, multi task weighting, stage initialization and UDP; random weights on the CPU."""
 import math
 
 import numpy as np
 import pytest
 import torch
 
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.inference import gpu_ops
 from pedrec.models.data_structures import ImageSize
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
@@ -29,7 +29,7 @@ def _targets(batch=2, joints=26, seed=0):
 @pytest.fixture(scope="module")
 def net():
     torch.manual_seed(0)
-    net = PedRecNet(PedRecNet50Config())
+    net = PedRecNet(PedRecNetConfig())
     net.init_weights()
     return net
 
@@ -88,22 +88,21 @@ def test_heatmap_statistics():
     assert stats[0, 1, 0] < 0.01 and stats[0, 1, 1] > 0.99 and stats[0, 1, 2] > 0.3
 
 
-def test_initialization_from_v1_checkpoint(tmp_path, net):
-    """v1 checkpoints share backbone / decoder / pose heads; their orientation / confidence heads differ."""
+def test_initialization_from_predecessor_checkpoint(tmp_path, net):
+    """Matching weights are taken over, unknown keys and shape mismatches keep the initialization."""
     torch.manual_seed(1)
-    source = PedRecNetMTLWrapper(PedRecNet(PedRecNet50Config()), PedRecNetLossHead(torch.device("cpu")))
-    state = {k: v for k, v in source.state_dict().items()
-             if not k.startswith(("model.head_orientation.", "model.head_conf.", "loss_head."))}
-    state["model.head_orientation.body_orientation.weight"] = torch.zeros(3, 3)  # v1 style keys
-    state["model.head_conf.conv.weight"] = torch.zeros(1, 1)
-    state["loss_head.sigmas"] = torch.ones(4)
-    path = str(tmp_path / "experiment_pedrec_x_0.pth")
+    source = PedRecNetMTLWrapper(PedRecNet(PedRecNetConfig()), PedRecNetLossHead(torch.device("cpu")))
+    state = {k: v for k, v in source.state_dict().items() if not k.startswith("model.head_orientation.")}
+    state["model.head_orientation.body_orientation.vectors.weight"] = torch.zeros(3, 3)  # shape mismatch
+    state["model.unknown.weight"] = torch.zeros(1)
+    path = str(tmp_path / "experiment_pedrec_v2_x_0.pth")
     torch.save(state, path)
     target = PedRecNetMTLWrapper(net, PedRecNetLossHead(torch.device("cpu")))
     orientation_before = net.head_orientation.body_orientation.vectors.weight.clone()
     initialize_weights_with_same_name_and_shape(target, path)
-    assert torch.equal(net.feature_extractor.conv1.weight, source.model.feature_extractor.conv1.weight)
-    assert torch.equal(net.head_pose_3d.depth_heatmap_layer.weight, source.model.head_pose_3d.depth_heatmap_layer.weight)
+    first_backbone_param = next(net.backbone.parameters())
+    assert torch.equal(first_backbone_param, next(source.model.backbone.parameters()))
+    assert torch.equal(net.head_pose_3d.depth_map.weight, source.model.head_pose_3d.depth_map.weight)
     assert torch.equal(net.head_orientation.body_orientation.vectors.weight, orientation_before)
 
 

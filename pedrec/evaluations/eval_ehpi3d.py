@@ -51,7 +51,7 @@ def get_val_loader(experiment_paths: ExperimentPaths, batch_size, action_list, d
                                       dataset_cfg,
                                       action_list,
                                       trans,
-                                      pose_results_file=experiment_paths.sim_c01_val_results_filename)
+                                      pose_results_file=experiment_paths.sim_c01_val_lifted_results_filename)
 
     return DataLoader(sim_val, batch_size=batch_size, shuffle=False, num_workers=num_workers,
                       worker_init_fn=worker_init_fn)

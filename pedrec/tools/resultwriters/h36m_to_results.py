@@ -25,7 +25,7 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.training.experiments.experiment_train_helper import init_experiment
 from pedrec.utils.torch_utils.torch_helper import get_device, move_to_device
 import pandas as pd
@@ -164,7 +164,7 @@ def main(output_dir: str, output_postfix: str, net_cfg, h36m_val, weights_path: 
     df_gt.to_pickle(output_path)
 
 
-DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o"]
 
 
 def parse_args(argv=None):
@@ -182,7 +182,7 @@ def cli(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
     network_paths = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
     output_dir = os.path.dirname(os.path.normpath(experiment_paths.h36m_val_dir))
-    net_cfg = PedRecNet50Config()
+    net_cfg = PedRecNetConfig()
 
     trans = transforms.Compose([
         transforms.ToTensor(),

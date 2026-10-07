@@ -101,7 +101,7 @@ def parse_args(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Expands SIM-C01 result dataframes to all frames (*_allframes.pkl), "
                                                  "the input format of the EHPI3D training / evaluation.")
-    parser.add_argument("--experiment", default="p2d3d_c_o_h36m_sim_mebow", help="Training stage name.")
+    parser.add_argument("--experiment", default="p2d3d_c_o", help="Training stage name.")
     parser.add_argument("--split", choices=["train", "val"], default="train")
     parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
     return parser.parse_args(argv)

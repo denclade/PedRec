@@ -5,7 +5,7 @@ import pytest
 import torch
 
 from pedrec.configs.app_config import AppConfig
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.inference.pipeline import PedRecPipeline, PipelineConfig
 from pedrec.models.data_structures import ImageSize
 from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
@@ -19,7 +19,7 @@ def weights(tmp_path_factory):
     root = tmp_path_factory.mktemp("weights")
     torch.manual_seed(0)
     paths = {"pedrec": root / "pedrec.pth", "action": root / "action.pth"}
-    torch.save(PedRecNet(PedRecNet50Config()).state_dict(), paths["pedrec"])
+    torch.save(PedRecNet(PedRecNetConfig()).state_dict(), paths["pedrec"])
     torch.save(EhpiStGcn(len(AppConfig().inference.action_list)).state_dict(), paths["action"])
     return {k: str(v) for k, v in paths.items()}
 
@@ -79,7 +79,7 @@ def test_pose_only_on_full_frame(weights):
     pipeline = PedRecPipeline(cfg, _app_cfg(), torch.device("cpu"))
     result = pipeline.process(1, next(_frames()))
     assert len(result.humans) == 1
-    assert result.humans[0].skeleton_3d.shape == (PedRecNet50Config().model.num_joints, 4)
+    assert result.humans[0].skeleton_3d.shape == (PedRecNetConfig().model.num_joints, 4)
 
 
 def test_detector_only_with_rtdetr():

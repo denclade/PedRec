@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from pedrec.configs.app_config import AppConfig
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.inference import gpu_ops
 from pedrec.inference.pipeline import PedRecPipeline, PipelineConfig, RuntimeConfig
 from pedrec.models.data_structures import ImageSize
@@ -84,7 +84,7 @@ def timeit(fn, device, repeats: int, warmup: int = 3):
 def random_models(device: torch.device, num_actions: int, half: bool):
     import transformers
     torch.manual_seed(0)
-    pose_net = PedRecNet(PedRecNet50Config())
+    pose_net = PedRecNet(PedRecNetConfig())
     pose_net.init_weights()
     detr = transformers.RTDetrV2ForObjectDetection(transformers.RTDetrV2Config(num_labels=80))
     detector = RTDetrDetector(device, "random", half=half, model=detr)

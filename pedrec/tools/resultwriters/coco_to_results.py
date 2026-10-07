@@ -25,7 +25,7 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.training.experiments.experiment_train_helper import init_experiment
 from pedrec.utils.torch_utils.torch_helper import get_device, move_to_device
 import pandas as pd
@@ -160,8 +160,7 @@ def main(output_dir: str, output_postfix: str, net_cfg, coco_val: CocoDataset, w
     df_gt.to_pickle(output_path)
 
 
-DEFAULT_EXPERIMENTS = ["p2d_c", "p2d3d_c_h36m", "p2d3d_c_sim", "p2d3d_c_h36m_sim", "p2d3d_c_o_h36m_mebow", "p2d3d_c_o_sim",
-                       "p2d3d_c_o_h36m_sim", "p2d3d_c_o_h36m_sim_mebow"]
+DEFAULT_EXPERIMENTS = ["p2d_c", "p2d3d_c_o"]
 
 
 def parse_args(argv=None):
@@ -179,7 +178,7 @@ def cli(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
     network_paths = [experiment_paths.get_stage_checkpoint_path(name) for name in args.experiments]
     output_dir = os.path.join(experiment_paths.coco_dir, "results")
-    net_cfg = PedRecNet50Config()
+    net_cfg = PedRecNetConfig()
     coco_val_dataset_cfg = get_coco_dataset_cfg_default()
 
     trans = transforms.Compose([

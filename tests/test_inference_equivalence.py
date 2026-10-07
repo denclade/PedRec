@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torchvision import transforms
 
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.inference import gpu_ops
 from pedrec.inference.pipeline import PedRecPoseEstimator, RuntimeConfig, SKELETON_3D_RANGE
 from pedrec.models.data_structures import ImageSize
@@ -81,7 +81,7 @@ def _reference_poses(net, img, bbs, input_size):
 
 def test_pose_estimator_matches_reference():
     torch.manual_seed(0)
-    net = PedRecNet(PedRecNet50Config())
+    net = PedRecNet(PedRecNetConfig())
     net.init_weights()
     net.eval()
     img = _random_frame()

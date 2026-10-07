@@ -20,7 +20,7 @@ from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
 from pedrec.configs.dataset_configs import get_coco_dataset_cfg_default
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.datasets.coco_dataset import CocoDataset
 from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
@@ -58,7 +58,7 @@ def main(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
     dataset_cfg = get_coco_dataset_cfg_default()
     dataset_cfg.use_mebow_orientation = True
-    cfg = PedRecNet50Config()
+    cfg = PedRecNetConfig()
     device = get_device(not args.cpu)
     val_set = CocoDataset(experiment_paths.coco_dir, DatasetType.VALIDATE, dataset_cfg,
                           cfg.model.input_size, pose_transform)

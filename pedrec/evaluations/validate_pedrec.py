@@ -2,7 +2,7 @@
 Validates a PedRecNet checkpoint on the COCO / SIM / Human3.6m validation sets (2D / 3D pose, joint confidence,
 orientation) using the same validation code as the training loop.
 
-    python pedrec/evaluations/validate_pedrec.py --weights data/models/pedrec/single_results/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0.pth
+    python pedrec/evaluations/validate_pedrec.py --weights data/models/pedrec/single_results/experiment_pedrec_v2_p2d3d_c_o_0.pth
 
 Accepts both the training checkpoints (MTL wrapper incl. loss head) and the exported ``*_net.pth`` files.
 """
@@ -19,7 +19,7 @@ import torchvision.transforms as transforms
 from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs import default_paths
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.evaluations.validate import print_results
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
@@ -73,7 +73,7 @@ def main(argv=None):
         experiment_name="validate_pedrec",
         initialization_notes=f"Loaded from {weights}",
         experiment_paths=experiment_paths,
-        net_cfg=PedRecNet50Config(),
+        net_cfg=PedRecNetConfig(),
         use_val_coco=not args.no_coco,
         use_val_sim=not args.no_sim,
         use_val_h36m=not args.no_h36m,
