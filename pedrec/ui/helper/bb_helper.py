@@ -80,7 +80,7 @@ def draw_human_labels(painter: QPainter, bb: np.ndarray, uid: int, score: float,
     label = f"#{uid}  {int(round(score * 100))}%" if uid is not None and uid >= 0 else f"{int(round(score * 100))}%"
     background = QColor(color)
     background.setAlpha(230)
-    _chip(painter, rect.left(), rect.top() - 2, label, LABEL_FONT, background, QColor(theme.BACKGROUND),
+    _chip(painter, rect.left(), rect.top() - 2, label, LABEL_FONT, background, QColor(theme.LABEL_TEXT),
           sees_camera_icon)
     if actions:
         y = rect.bottom() + 2
