@@ -100,7 +100,7 @@ description = "How to get a registration-only dataset: mise run download:dataset
 run = 'python pedrec/tools/datasets/download_datasets.py info {{arg(name="name")}}'
 
 [tasks."data:h36m:images"]
-description = "Extract the Human3.6m frames used by the PedRec dataframes from the (registered) H36M videos"
+description = "Extract the Human3.6m frames the training uses (every 10th train / 64th val frame; --val-step 1 / --train-step 1 for all) from the registered H36M videos"
 run = "python pedrec/tools/datasets/download_datasets.py h36m-images"
 
 [tasks."data:convert:h36m"]
