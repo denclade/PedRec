@@ -94,6 +94,35 @@ if [ -f "$f" ]; then echo "exists: $f"; else curl -L --fail -o "$f" "https://den
 echo "Note: the pexels video (multi_person_crossing_street.mp4) has to be downloaded manually, see README."
 """
 
+# Datasets below $PEDREC_DATA_DIR/datasets, see README "Datasets" (resumable, existing files are skipped)
+[tasks."data:check"]
+description = "Check models + datasets before training: what is downloaded / missing, image samples, next steps"
+run = "python pedrec/tools/datasets/check_datasets.py"
+
+[tasks."download:datasets"]
+description = "Overview of the training datasets and how to get them (registration-only ones: download:datasets:info <name>)"
+run = "python pedrec/tools/datasets/download_datasets.py list"
+
+[tasks."download:datasets:pedrec"]
+description = "PedRec datasets: SIM-ROM (ROMb), SIM-Circle (RT3DValidate), SIM-C01 (+ PedRecNet results), Human3.6m dataframes"
+run = "python pedrec/tools/datasets/download_datasets.py pedrec"
+
+[tasks."download:datasets:coco"]
+description = "COCO 2017 images + keypoint annotations (~19 GB); MEBOW orientations: download:datasets:info mebow"
+run = "python pedrec/tools/datasets/download_datasets.py coco"
+
+[tasks."download:datasets:info"]
+description = "How to get a registration-only dataset: mise run download:datasets:info <h36m|mebow|tud|...>"
+run = 'python pedrec/tools/datasets/download_datasets.py info {{arg(name="name")}}'
+
+[tasks."data:h36m:images"]
+description = "Extract the Human3.6m frames the training uses (every 10th train / 64th val frame; --val-step 1 / --train-step 1 for all) from the registered H36M videos"
+run = "python pedrec/tools/datasets/download_datasets.py h36m-images"
+
+[tasks."data:convert:h36m"]
+description = "Regenerate the Human3.6m dataframes + images from the raw H36M data (instead of download:datasets:pedrec)"
+run = "python pedrec/tools/datasets/human36m_dataset_generator.py"
+
 # ------------------------------------------------------------------------------------------------------- demo / run
 [tasks.demo]
 description = "Qt demo (detection, pose, orientation, tracking, actions) on the default demo video; pass --video/--images/--image/--webcam"

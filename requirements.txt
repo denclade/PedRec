@@ -16,6 +16,8 @@ h5py~=3.16.0
 tqdm~=4.70.1
 ijson~=3.5.1
 cdflib~=1.3.14
+# dataset downloads (ROMb.7z, RT3DValidate.7z)
+py7zr~=1.1.3
 packaging>=26.0
 # GUI (pedrec/demo.py without --headless)
 PyQt6~=6.11.0
