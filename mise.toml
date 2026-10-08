@@ -75,6 +75,10 @@ echo "Note: the pexels video (multi_person_crossing_street.mp4) has to be downlo
 """
 
 # Datasets below $PEDREC_DATA_DIR/datasets, see README "Datasets" (resumable, existing files are skipped)
+[tasks."data:check"]
+description = "Check models + datasets before training: what is downloaded / converted / missing, image samples, next steps and recommendations"
+run = "python pedrec/tools/datasets/check_datasets.py"
+
 [tasks."download:datasets"]
 description = "Overview of the training datasets and how to get them (registration-only ones: info <name>)"
 run = "python pedrec/tools/datasets/download_datasets.py list"
