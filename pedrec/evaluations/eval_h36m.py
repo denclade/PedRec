@@ -92,7 +92,9 @@ def parse_args(argv=None):
     parser.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
     parser.add_argument("--batch-size", type=int, default=48)
     parser.add_argument("--num-workers", type=int, default=12)
-    parser.add_argument("--subsample", type=int, default=1)
+    parser.add_argument("--subsample", type=int, default=64,
+                        help="Every n-th validation frame (default 64, as the training validation; 1 needs all "
+                             "frames: mise run data:h36m:images --val-step 1).")
     parser.add_argument("--cpu", action="store_true")
     return parser.parse_args(argv)
 

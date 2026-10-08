@@ -33,6 +33,7 @@ mise install                 # pinned Python 3.14 + uv
 mise run setup               # .venv with PyTorch 2.14 (CUDA 13.0), PyQt6, ...; see below for other CUDA versions
 mise run gpu:info            # check that PyTorch sees the GPU
 mise run download:models     # YoloV4, PedRecNet, EHPI3D and pose-resnet weights -> data/models
+mise run data:check          # datasets / models: what is there, what is missing, next steps (run before training)
 mise run demo --video my_video.mp4
 mise run test                # unit tests (no data / GPU needed)
 ```
@@ -83,18 +84,25 @@ Not required to run the network but for some experiments / trainings:
 - Intermediate training checkpoints of the stage chain (see Training): `mise run download:checkpoints <stage>` or https://dennisnotes.com/files/pedrec/single_results/experiment_pedrec_<stage>_0.pth, placed in *data/models/pedrec/single_results/*.
 
 ### Datasets
-- If you want to train the network(s) yourself, you need the following datasets:
-  - [COCO (2017)](https://cocodataset.org/#download)
-    - Additionally: [MEBOW body orientation annotations](https://github.com/ChenyanWu/MEBOW) - train_hoe.json and val_hoe.json need to be placed in COCO/annotations
-  - Human3.6m
-    - Additionally: [train/36m_train_pedrec.pkl](https://dennisnotes.com/files/pedrec/datasets/H36M/h36m_train_pedrec.pkl) in h36m_dir/train/ and [*train/36m_val_pedrec.pkl*](https://dennisnotes.com/files/pedrec/datasets/H36M/h36m_val_pedrec.pkl) in h36m_dir/val/
-  - [ROMb (SIM-ROM)](https://dennisnotes.com/files/pedrec/datasets/ROMb.7z)
-  - [RT3DValidate (SIM-Circle)](https://dennisnotes.com/files/pedrec/datasets/RT3DValidate.7z)
-  - [TUD](https://www.mpi-inf.mpg.de/de/departments/computer-vision-and-machine-learning/research/people-detection-pose-estimation-and-tracking/monocular-3d-pose-estimation-and-tracking-by-detection) - cvpr10_multiview_pedestrians
-- For action recognition:
-  - SIM-C01 Pose Data (raw image data not published, but you only require the skeleton dataframe for training!)
-    - [SIM-C01 Train](https://dennisnotes.com/files/pedrec/datasets/SIM-C01/rt_conti_01_train_FIN.pkl)
-    - [SIM-C01 Val](https://dennisnotes.com/files/pedrec/datasets/SIM-C01/rt_conti_01_val.pkl)
+All datasets are expected below `$PEDREC_DATA_DIR/datasets` (default *data/datasets*). **Run `mise run data:check`
+before training:** it shows what is downloaded and missing (incl. sampled images at exactly the dataframe rows the
+training reads), whether `train:pedrec` / `train:ehpi3d` can run and the commands for the next steps. The downloads
+are resumable and skip existing files; all datasets are restricted to non-commercial research.
+
+| Dataset | Used for | Get it |
+|---|---|---|
+| COCO 2017 | PedRecNet 2D / confidence | `mise run download:datasets:coco` |
+| MEBOW (COCO body orientations) | `*_mebow` stages | by e-mail, `mise run download:datasets:info mebow` (train_hoe.json / val_hoe.json into COCO/annotations) |
+| Human3.6m | PedRecNet 3D | registration, only the "Videos" are needed (`mise run download:datasets:info h36m`); dataframes: `mise run download:datasets:pedrec --parts h36m`; images: `mise run data:h36m:images` |
+| SIM-ROM (ROMb), SIM-Circle (RT3DValidate) | PedRecNet 3D / orientation | `mise run download:datasets:pedrec --parts rom circle` |
+| SIM-C01 | EHPI3D action recognition (skeleton dataframes; the images are not published) | `mise run download:datasets:pedrec --parts c01` |
+| SIM-C01 PedRecNet results | input of the `gt_pred` EHPI3D variants (regenerating them with `train:ehpi3d:data` needs the SIM-C01 images) | `mise run download:datasets:pedrec --parts c01-results` |
+| TUD multiview pedestrians | `*_tud` stages, orientation evaluation | `mise run download:datasets:info tud` |
+
+`mise run download:datasets:pedrec` without `--parts` downloads all PedRec parts. `data:h36m:images` extracts every
+10th training and every 64th validation frame (what the training uses, ~20 GB); `--val-step 1` extracts all
+validation frames (needed by `results:h36m`, `eval:h36m --subsample 1`). Additional 3D datasets (MPI-INF-3DHP,
+Fit3D, AIST++, AMASS) are supported on the v2 branch; the data layout is the same, so the datasets can be shared.
 
 The expected layout below the data root (see `pedrec/training/experiments/experiment_path_helper.py`, every path can be
 overridden there or via the script options):
@@ -230,7 +238,7 @@ tests/                          unit tests (mise run test)
 # Generate own training data
 Check out the panda dataframes (e.g. the rt_conti_01_train_FIN.pkl from SIM-C01 dataset, or the pkls from the H36M dataset). If you provide a dataset of the same structure you can just use the pedrec dataset class.
 You can find some scripts I used to generate the dataframes in `pedrec/tools/datasets/`, but I have not tested them in a while.
-The same applies for EHPI3D action recognition data: Check out the dataframes from the rt_conti_01_train_FIN.pkl file! You might want to checkout the notebook *dataset_rtsim_conti01_ehpi* as well. The PedRecNet result dataframes for SIM-C01 can be regenerated with `mise run train:ehpi3d:data`. You can find the result files (e.g. the C01F_train_pred_df_experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_allframes.pkl) at https://dennisnotes.com/files/pedrec/result_dfs/filename.
+The same applies for EHPI3D action recognition data: Check out the dataframes from the rt_conti_01_train_FIN.pkl file! You might want to checkout the notebook *dataset_rtsim_conti01_ehpi* as well. The PedRecNet result dataframes for SIM-C01 are downloaded with `mise run download:datasets:pedrec --parts c01-results` (https://dennisnotes.com/files/pedrec/result_dfs/<filename>) and can be regenerated with `mise run train:ehpi3d:data` (needs the SIM-C01 images).
 
 # Notebooks
 I've just pasted a few of my notebooks in the notebooks folder. They are not cleaned up and may contain absolute paths etc. but maybe they help the one or other to understand some concepts / validation results.
