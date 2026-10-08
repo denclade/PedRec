@@ -70,7 +70,11 @@ Fit3D (Fieraru et al., AAAI 2021, https://fit3d.imar.ro), registration + non-com
 AIST++ (Li et al., ICCV 2021, https://google.github.io/aistplusplus_dataset), annotations CC BY 4.0, videos of the
 AIST Dance Video Database (research use, terms: https://aistdancedb.ongaaccel.jp/terms_of_use/):
     mise run download:datasets:aistpp --accept-terms [--views c01 c05 c09] [--max-sequences 200]
-    then mise run data:convert:aistpp""",
+    then mise run data:convert:aistpp
+  Annotations from the GitHub release v1.0 (keypoints3d 876 MB + cameras + splits + ignore_list), videos (1080p,
+  60 fps) directly from the AIST Dance DB like the official downloader.py: 1408 sequences x 9 views = 12.7k videos,
+  the size of the full set is printed before the download starts (expect a few hundred GB; --views / --max-sequences
+  limit it). --annotations-only: only the annotations (enough for the lifter sequences, no images).""",
     "amass": """\
 AMASS (Mahmood et al., ICCV 2019, https://amass.is.tue.mpg.de), registration + non-commercial license:
     1. Register, download the "SMPL+H G" archives of the wanted datasets (recommended: MPI_Limits (range of motion),
@@ -92,7 +96,7 @@ def log(msg: str):
     print(msg, flush=True)
 
 
-def _fetch(url: str, path: str, retries: int = 3):
+def _fetch(url: str, path: str, retries: int = 3, quiet: bool = False):
     part = path + ".part"
     for attempt in range(retries):
         offset = os.path.getsize(part) if os.path.isfile(part) else 0
@@ -110,7 +114,7 @@ def _fetch(url: str, path: str, retries: int = 3):
                     while chunk := response.read(1 << 20):
                         f.write(chunk)
                         done += len(chunk)
-                        if time.time() - last_report > 5:
+                        if not quiet and time.time() - last_report > 5:
                             last_report = time.time()
                             progress = f"{done / total * 100:5.1f}% of {total / 1e9:.2f} GB" if total \
                                 else f"{done / 1e9:.2f} GB"
@@ -131,21 +135,32 @@ def _fetch(url: str, path: str, retries: int = 3):
     raise RuntimeError(f"Download failed: {url}")
 
 
-def download(urls: Sequence[str], path: str) -> str:
+def download(urls: Sequence[str], path: str, quiet: bool = False) -> str:
     """Downloads the first working url of urls to path (skipped if path exists)."""
     if os.path.isfile(path):
-        log(f"exists: {path}")
+        if not quiet:
+            log(f"exists: {path}")
         return path
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     errors = []
     for url in [urls] if isinstance(urls, str) else urls:
-        log(f"download {url} -> {path}")
+        if not quiet:
+            log(f"download {url} -> {path}")
         try:
-            _fetch(url, path)
+            _fetch(url, path, quiet=quiet)
             return path
         except Exception as e:  # try the next mirror
             errors.append(f"{url}: {e}")
     raise RuntimeError("Download failed:\n  " + "\n  ".join(errors))
+
+
+def _remove_os_junk(directory: str):
+    """macOS metadata in archives (__MACOSX/, ._<name>, .DS_Store), e.g. in the AIST++ annotation archives."""
+    shutil.rmtree(os.path.join(directory, "__MACOSX"), ignore_errors=True)
+    for parent, _, files in os.walk(directory):
+        for name in files:
+            if name.startswith("._") or name == ".DS_Store":
+                os.remove(os.path.join(parent, name))
 
 
 def extract(archive: str, target_dir: str, keep_archive: bool = False):
@@ -169,6 +184,7 @@ def extract(archive: str, target_dir: str, keep_archive: bool = False):
             t.extractall(tmp, filter="data")
     else:
         raise ValueError(f"Unknown archive type: {archive}")
+    _remove_os_junk(tmp)
     content = os.listdir(tmp)
     source = os.path.join(tmp, content[0]) if len(content) == 1 and os.path.isdir(os.path.join(tmp, content[0])) \
         else tmp
@@ -282,37 +298,64 @@ def get_3dhp(datasets: str, accept_license: bool, subjects: List[int], cameras: 
     log("done, convert with: mise run data:convert:3dhp")
 
 
-AISTPP_ANNOTATIONS = "https://storage.googleapis.com/aist_plusplus_public/20210308/fullset.zip"
-AISTPP_VIDEO_LIST = "https://storage.googleapis.com/aist_plusplus_public/20121228/video_list.txt"
+# https://google.github.io/aistplusplus_dataset/download.html: annotations as GitHub release assets, videos from the
+# AIST Dance Video Database (as the official downloader.py of google/aistplusplus_api)
+AISTPP_RELEASE = "https://github.com/google/aistplusplus_dataset/releases/download/v1.0"
+AISTPP_ANNOTATIONS = ["keypoints3d", "cameras", "splits"]  # keypoints2d (1.3 GB) and motions (SMPL) are not needed
 AISTPP_VIDEOS = "https://aistdancedb.ongaaccel.jp/v1.0.0/video/10M"
 
 
+def _content_length(url: str) -> Optional[int]:
+    try:
+        request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "pedrec-dataset-downloader"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return int(response.headers.get("Content-Length") or 0) or None
+    except Exception:
+        return None
+
+
 def get_aistpp(datasets: str, accept_terms: bool, views: List[str], max_sequences: Optional[int], workers: int,
-               keep_archives: bool):
-    if not accept_terms:
-        raise SystemExit("The AIST++ videos are part of the AIST Dance Video Database, read the terms of use "
-                         "(https://aistdancedb.ongaaccel.jp/terms_of_use/) and pass --accept-terms.")
+               keep_archives: bool, annotations_only: bool = False):
     root = os.path.join(datasets, "AIST++")
     annotations = os.path.join(root, "annotations")
-    download_and_extract(AISTPP_ANNOTATIONS, annotations, "keypoints3d", keep_archives)
-    ignore_path = os.path.join(annotations, "ignore_list.txt")
-    ignore = set(open(ignore_path).read().split()) if os.path.isfile(ignore_path) else set()
-    sequences = sorted(os.path.splitext(f)[0] for f in os.listdir(os.path.join(annotations, "keypoints3d")))
+    # annotations: keypoints3d.zip 876 MB, cameras.zip / splits.zip / ignore_list.txt a few KB
+    for name in AISTPP_ANNOTATIONS:
+        download_and_extract(f"{AISTPP_RELEASE}/{name}.zip", os.path.join(annotations, name), "", keep_archives)
+    download(f"{AISTPP_RELEASE}/ignore_list.txt", os.path.join(annotations, "ignore_list.txt"))
+    if annotations_only:
+        log("annotations done (without videos the converter writes only the lifter sequences)")
+        return
+    if not accept_terms:
+        raise SystemExit("The AIST++ videos are part of the AIST Dance Video Database, read the terms of use "
+                         "(https://aistdancedb.ongaaccel.jp/terms_of_use/) and pass --accept-terms "
+                         "(or --annotations-only).")
+    ignore = set(open(os.path.join(annotations, "ignore_list.txt")).read().split())
+    sequences = sorted(os.path.splitext(f)[0] for f in os.listdir(os.path.join(annotations, "keypoints3d"))
+                       if f.endswith(".pkl"))
     sequences = [s for s in sequences if s not in ignore][:max_sequences]
-    video_list = download(AISTPP_VIDEO_LIST, os.path.join(root, "video_list.txt"))
-    available = set(open(video_list).read().split())
+    # sequence gBR_sBM_cAll_d04_mBR0_ch01 -> videos gBR_sBM_c01_d04_mBR0_ch01 ... c09
     names = [s.replace("cAll", view) for s in sequences for view in views]
-    names = [n for n in names if n in available]
     video_dir = os.path.join(root, "videos")
-    log(f"{len(names)} videos ({len(sequences)} sequences x {len(views)} views) -> {video_dir}")
+    missing = [n for n in names if not os.path.isfile(os.path.join(video_dir, f"{n}.mp4"))]
+    size = _content_length(f"{AISTPP_VIDEOS}/{missing[0]}.mp4") if missing else None
+    estimate = f", ~{size * len(missing) / 1e9:.0f} GB (estimated from the first video)" if size else ""
+    log(f"{len(names)} videos ({len(sequences)} sequences x {len(views)} views), {len(missing)} to download"
+        f"{estimate} -> {video_dir}")
+    from tqdm import tqdm
+    failed = []
 
     def get(name):
         try:
-            download(f"{AISTPP_VIDEOS}/{name}.mp4", os.path.join(video_dir, f"{name}.mp4"))
+            download(f"{AISTPP_VIDEOS}/{name}.mp4", os.path.join(video_dir, f"{name}.mp4"), quiet=True)
         except Exception as e:
-            log(f"failed: {name}: {e}")
+            failed.append(f"{name}: {e}")
     with ThreadPoolExecutor(workers) as pool:
-        list(pool.map(get, names))
+        list(tqdm(pool.map(get, missing), total=len(missing), desc="AIST++ videos", unit="video", dynamic_ncols=True))
+    if failed:
+        with open(os.path.join(root, "failed_videos.txt"), "w") as f:
+            f.write("\n".join(failed) + "\n")
+        log(f"{len(failed)} videos failed (see {os.path.join(root, 'failed_videos.txt')}), e.g. {failed[0]}; "
+            f"run the task again to retry")
     log("done, convert with: mise run data:convert:aistpp")
 
 
@@ -339,6 +382,7 @@ def main(argv=None):
                    help="Chest height cameras by default.")
     p = sub.add_parser("aistpp", help="AIST++ annotations + AIST Dance DB videos")
     p.add_argument("--accept-terms", action="store_true")
+    p.add_argument("--annotations-only", action="store_true", help="Only the annotations (~0.9 GB), no videos.")
     p.add_argument("--views", nargs="*", default=[f"c{i:02d}" for i in range(1, 10)])
     p.add_argument("--max-sequences", type=int, default=None)
     p.add_argument("--workers", type=int, default=4)
@@ -359,7 +403,8 @@ def main(argv=None):
     elif args.command == "3dhp":
         get_3dhp(datasets, args.accept_license, args.subjects, args.cameras, args.keep_archives)
     elif args.command == "aistpp":
-        get_aistpp(datasets, args.accept_terms, args.views, args.max_sequences, args.workers, args.keep_archives)
+        get_aistpp(datasets, args.accept_terms, args.views, args.max_sequences, args.workers, args.keep_archives,
+                   args.annotations_only)
 
 
 if __name__ == "__main__":

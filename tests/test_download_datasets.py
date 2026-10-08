@@ -80,3 +80,41 @@ def test_h36m_images(tmp_path):
     dd.extract_h36m_images(str(tmp_path), ["val"])
     images = sorted(os.listdir(base / "S9" / "Images" / "Walking 1.54138969"))
     assert images == ["img_00001.jpg", "img_00005.jpg", "img_00010.jpg"]
+
+
+def _zip_with_macos_junk(path, folder: str, files: dict):
+    """Like the AIST++ release archives: top level folder + __MACOSX/._* metadata."""
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(f"{folder}/", b"")
+        z.writestr(f"__MACOSX/._{folder}", b"junk")
+        for name, data in files.items():
+            z.writestr(f"{folder}/{name}", data)
+            z.writestr(f"__MACOSX/{folder}/._{name}", b"junk")
+
+
+def test_aistpp_download(server, tmp_path, monkeypatch):
+    root, url = server
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    release, videos = root / "release", root / "videos"
+    os.makedirs(release)
+    os.makedirs(videos)
+    seqs = ["gBR_sBM_cAll_d04_mBR0_ch01", "gBR_sBM_cAll_d04_mBR0_ch02", "gBR_sBM_cAll_d04_mBR0_ch03"]
+    _zip_with_macos_junk(release / "keypoints3d.zip", "keypoints3d", {f"{s}.pkl": b"kp" for s in seqs})
+    _zip_with_macos_junk(release / "cameras.zip", "cameras", {"mapping.txt": b"x", "setting1.json": b"[]"})
+    _zip_with_macos_junk(release / "splits.zip", "splits", {"pose_val.txt": b""})
+    (release / "ignore_list.txt").write_text(seqs[2] + "\n")
+    for view in ("c01", "c02"):
+        (videos / f"{seqs[0].replace('cAll', view)}.mp4").write_bytes(b"video")
+    monkeypatch.setattr(dd, "AISTPP_RELEASE", f"{url}/release")
+    monkeypatch.setattr(dd, "AISTPP_VIDEOS", f"{url}/videos")
+    datasets = tmp_path / "datasets"
+    dd.get_aistpp(str(datasets), accept_terms=True, views=["c01", "c02"], max_sequences=None, workers=2,
+                  keep_archives=False)
+    annotations = datasets / "AIST++" / "annotations"
+    assert sorted(os.listdir(annotations)) == ["cameras", "ignore_list.txt", "keypoints3d", "splits"]
+    assert sorted(os.listdir(annotations / "keypoints3d")) == [f"{s}.pkl" for s in seqs]  # no ._* files
+    assert sorted(os.listdir(datasets / "AIST++" / "videos")) == ["gBR_sBM_c01_d04_mBR0_ch01.mp4",
+                                                                  "gBR_sBM_c02_d04_mBR0_ch01.mp4"]
+    # the second sequence has no videos on the server, the ignored third one is not requested
+    failed = (datasets / "AIST++" / "failed_videos.txt").read_text()
+    assert "mBR0_ch02" in failed and "mBR0_ch03" not in failed
