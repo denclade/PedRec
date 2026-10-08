@@ -4,9 +4,9 @@ lifter (motion capture only, no images).
 
 AMASS unifies many mocap datasets as SMPL-H parameters, among them ``MPI_Limits`` (PosePrior, Akhter & Black 2015:
 the joint limits / range of motion of the human body) and large everyday motion collections (CMU, BMLmovi, KIT, ...).
-The joints are computed with the SMPL-H body model (``smplx`` package, model files from https://mano.is.tue.mpg.de,
-"Extended SMPL+H model", or the smplx layout) and seen by a virtual camera per sequence (random distance / height / direction, looking at
-the person) to get the 2D inputs of the lifter.
+The joints are computed with the SMPL+H body model (``smplx`` package; model files from https://mano.is.tue.mpg.de,
+"Extended SMPL+H model (used in AMASS project)", or the smplx layout) and seen by a virtual camera per sequence
+(random distance / height / direction, looking at the person) to get the 2D inputs of the lifter.
 
     mise run data:convert:amass  # --root data/datasets/AMASS --body-models data/models/body_models
 """

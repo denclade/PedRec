@@ -75,8 +75,11 @@ AIST Dance Video Database (research use, terms: https://aistdancedb.ongaaccel.jp
 AMASS (Mahmood et al., ICCV 2019, https://amass.is.tue.mpg.de), registration + non-commercial license:
     1. Register, download the "SMPL+H G" archives of the wanted datasets (recommended: MPI_Limits (range of motion),
        CMU, BMLmovi, KIT, HDM05, TotalCapture, ...) and extract them to datasets/AMASS (-> AMASS/MPI_Limits/...).
-    2. Body model: "Extended SMPL+H model" from https://mano.is.tue.mpg.de (or the AMASS download page), extracted to
-       models/body_models/smplh (-> smplh/{male,female,neutral}/model.npz).
+    2. Body model SMPL+H (= SMPL body + MANO hands, the model AMASS is fitted with; it is hosted on the MANO site,
+       not on smpl.is.tue.mpg.de, own registration): https://mano.is.tue.mpg.de -> Download -> "Extended SMPL+H
+       model (used in AMASS project)" (smplh.tar.xz, npz files with 16 shape parameters), extracted to
+       models/body_models/smplh (-> smplh/{male,female,neutral}/model.npz). Not needed: the "Models & Code" pkl
+       files (chumpy) and the DMPLs. The plain SMPL model does not fit (no hand joints, 10 shape parameters).
     3. mise run data:convert:amass   (sequences for the 3D lifter only, AMASS has no images)""",
     "tud": """\
 TUD multiview pedestrians (Andriluka et al., CVPR 2010), orientation evaluation only (eval:tud-orientation):
