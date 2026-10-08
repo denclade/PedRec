@@ -2,7 +2,8 @@
 AIST++ (Li et al., ICCV 2021; https://google.github.io/aistplusplus_dataset) -> PedRec dataframes.
 
 Street / jazz / break dance etc. of 30 dancers in 9 calibrated views, i.e. a very large range of motion (jumps, spins,
-floor moves). Annotations (``fullset.zip``) contain ``keypoints3d/<seq>.pkl`` (COCO 17 joints, world coordinates),
+floor moves). Annotations (``mise run download:datasets:aistpp``, GitHub release v1.0 of google/aistplusplus_dataset):
+``keypoints3d/<seq>.pkl`` (COCO 17 joints, world coordinates in cm, 60 fps),
 ``cameras/<env>.json`` (9 views: name, size, matrix, rotation (Rodrigues), translation, distortions),
 ``cameras/mapping.txt`` (sequence -> environment), ``splits/`` and ``ignore_list.txt``. Videos (60 fps) are named
 like the sequence with ``cAll`` replaced by the view (``c01`` ... ``c09``).

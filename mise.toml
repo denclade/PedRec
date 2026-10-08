@@ -92,7 +92,7 @@ description = "MPI-INF-3DHP via the official scripts (non-commercial license: pa
 run = "python pedrec/tools/datasets/download_datasets.py 3dhp"
 
 [tasks."download:datasets:aistpp"]
-description = "AIST++ annotations + videos (AIST Dance DB terms: pass --accept-terms); e.g. --views c01 c05 --max-sequences 300"
+description = "AIST++ annotations (0.9 GB) + videos (AIST Dance DB terms: --accept-terms; all views: hundreds of GB, limit with --views c01 c05 --max-sequences 300; --annotations-only)"
 run = "python pedrec/tools/datasets/download_datasets.py aistpp"
 
 [tasks."download:datasets:info"]

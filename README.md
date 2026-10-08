@@ -131,7 +131,7 @@ non-commercial research (COCO annotations: CC BY 4.0), check them before use.
 | TUD multiview pedestrians | orientation benchmark | evaluation | `mise run download:datasets:info tud` |
 | **MPI-INF-3DHP** (new) | 3D, 8 actors, green screen + outdoor test set, 14 cameras | PedRecNet 3D (images), lifter | `mise run download:datasets:3dhp --accept-license`, `mise run data:convert:3dhp` |
 | **Fit3D** (new) | fitness exercises with large range of motion, 4 cameras; also HumanSC3D / CHI3D | PedRecNet 3D (images), lifter | registration (`info fit3d`), `mise run data:convert:fit3d` |
-| **AIST++** (new) | dance (jumps, spins, floor moves), 9 views, 10M frames | PedRecNet 3D (images), lifter | `mise run download:datasets:aistpp --accept-terms [--views c01 c05 --max-sequences 300]`, `mise run data:convert:aistpp` |
+| **AIST++** (new) | dance (jumps, spins, floor moves), 9 views, 10M frames | PedRecNet 3D (images), lifter | `mise run download:datasets:aistpp --accept-terms [--views c01 c05 --max-sequences 300]` (annotations 0.9 GB, videos: size printed before the download, a few hundred GB for all views; `--annotations-only` for the lifter only), `mise run data:convert:aistpp` |
 | **AMASS** (new) | 40+ hours of mocap as SMPL-H, incl. **MPI_Limits** (joint limits / range of motion) | lifter only (no images) | registration (`info amass`), `mise run data:convert:amass` |
 
 The converters (`pedrec/tools/datasets/convert_*.py`) write PedRec dataframes (`<name>_{train,val}_pedrec.pkl`,
