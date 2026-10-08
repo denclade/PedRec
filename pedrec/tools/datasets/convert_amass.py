@@ -86,8 +86,12 @@ class BodyModels:
         for side in "lr":  # the AMASS model files have no hand PCA, AMASS poses use the full hand pose anyway
             data.setdefault(f"hands_components{side}", np.eye(45, dtype=np.float32))
             data.setdefault(f"hands_mean{side}", np.zeros(45, dtype=np.float32))
-        return smplx.SMPLH(model_path=path, data_struct=Struct(**data), gender=gender, use_pca=False,
-                           flat_hand_mean=True, num_betas=16, ext="npz")
+        # smplx assumes 300 shape components for a full model and silently limits smaller ones to 10 betas; the AMASS
+        # SMPL+H model has 16, use all of them
+        num_shapes = data["shapedirs"].shape[-1]
+        model_class = type("SMPLHAllBetas", (smplx.SMPLH,), {"SHAPE_SPACE_DIM": num_shapes})
+        return model_class(model_path=path, data_struct=Struct(**data), gender=gender, use_pca=False,
+                           flat_hand_mean=True, num_betas=num_shapes, ext="npz")
 
     def joints(self, data, step: int, max_frames: int, chunk: int = 1000) -> np.ndarray:
         import torch
@@ -99,7 +103,7 @@ class BodyModels:
         model = self.models[gender]
         poses = np.asarray(data["poses"], dtype=np.float32)[::step][:max_frames]
         trans = np.asarray(data["trans"], dtype=np.float32)[::step][:max_frames]
-        # smplx limits num_betas (e.g. to 10 for models with less than 300 shape components), use what it supports
+        # betas of the sequence (AMASS: 16), padded / cut to the shape components of the model
         betas = np.zeros(model.num_betas, dtype=np.float32)
         source_betas = np.asarray(data["betas"], dtype=np.float32)[:model.num_betas]
         betas[:len(source_betas)] = source_betas
