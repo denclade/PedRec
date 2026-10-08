@@ -137,7 +137,10 @@ non-commercial research (COCO annotations: CC BY 4.0), check them before use.
 The converters (`pedrec/tools/datasets/convert_*.py`) write PedRec dataframes (`<name>_{train,val}_pedrec.pkl`,
 images `img_<frame>.jpg`, same columns as the H36M / SIM dataframes: 26 joints 2D + 3D in mm relative to the hip,
 `supported` = 0 for joints the dataset does not have) and sequence dataframes for the lifter
-(`<name>_{train,val}_seq.pkl`). As soon as they exist, `train:pedrec` uses them for training and validation
+(`<name>_{train,val}_seq.pkl`). The conversion decodes the videos in parallel (`--workers`, default: CPUs, max 8)
+with a progress bar and can be interrupted and restarted (extracted images are kept). MPI-INF-3DHP images are
+downscaled from 2048x2048 to 1024x1024 (`--max-image-size`, 0 = original size; the crops of PedRecNet are 192x256
+anyway). Expect hours for the full MPI-INF-3DHP / AIST++ conversion (all frames of all videos have to be decoded). As soon as they exist, `train:pedrec` uses them for training and validation
 (disable with `--no-extra-3d`, balance with e.g. `--dataset-weights coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,aistpp=0.5`)
 and `train:lifter` adds the sequences. The new datasets have no orientation labels (orientation loss masked).
 

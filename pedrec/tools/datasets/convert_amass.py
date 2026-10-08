@@ -4,9 +4,9 @@ lifter (motion capture only, no images).
 
 AMASS unifies many mocap datasets as SMPL-H parameters, among them ``MPI_Limits`` (PosePrior, Akhter & Black 2015:
 the joint limits / range of motion of the human body) and large everyday motion collections (CMU, BMLmovi, KIT, ...).
-The joints are computed with the SMPL-H body model (``smplx`` package, model files from https://mano.is.tue.mpg.de,
-"Extended SMPL+H model", or the smplx layout) and seen by a virtual camera per sequence (random distance / height / direction, looking at
-the person) to get the 2D inputs of the lifter.
+The joints are computed with the SMPL+H body model (``smplx`` package; model files from https://mano.is.tue.mpg.de,
+"Extended SMPL+H model (used in AMASS project)", or the smplx layout) and seen by a virtual camera per sequence
+(random distance / height / direction, looking at the person) to get the 2D inputs of the lifter.
 
     mise run data:convert:amass  # --root data/datasets/AMASS --body-models data/models/body_models
 """
@@ -21,6 +21,7 @@ import zlib
 from typing import Dict, List, Optional
 
 import numpy as np
+from tqdm import tqdm
 
 from pedrec.configs.default_paths import get_data_root
 from pedrec.tools.datasets.pedrec_df_writer import J, PedRecDfWriter, Sequence, to_pedrec_joints
@@ -85,8 +86,12 @@ class BodyModels:
         for side in "lr":  # the AMASS model files have no hand PCA, AMASS poses use the full hand pose anyway
             data.setdefault(f"hands_components{side}", np.eye(45, dtype=np.float32))
             data.setdefault(f"hands_mean{side}", np.zeros(45, dtype=np.float32))
-        return smplx.SMPLH(model_path=path, data_struct=Struct(**data), gender=gender, use_pca=False,
-                           flat_hand_mean=True, num_betas=16, ext="npz")
+        # smplx assumes 300 shape components for a full model and silently limits smaller ones to 10 betas; the AMASS
+        # SMPL+H model has 16, use all of them
+        num_shapes = data["shapedirs"].shape[-1]
+        model_class = type("SMPLHAllBetas", (smplx.SMPLH,), {"SHAPE_SPACE_DIM": num_shapes})
+        return model_class(model_path=path, data_struct=Struct(**data), gender=gender, use_pca=False,
+                           flat_hand_mean=True, num_betas=num_shapes, ext="npz")
 
     def joints(self, data, step: int, max_frames: int, chunk: int = 1000) -> np.ndarray:
         import torch
@@ -98,7 +103,7 @@ class BodyModels:
         model = self.models[gender]
         poses = np.asarray(data["poses"], dtype=np.float32)[::step][:max_frames]
         trans = np.asarray(data["trans"], dtype=np.float32)[::step][:max_frames]
-        # smplx limits num_betas (e.g. to 10 for models with less than 300 shape components), use what it supports
+        # betas of the sequence (AMASS: 16), padded / cut to the shape components of the model
         betas = np.zeros(model.num_betas, dtype=np.float32)
         source_betas = np.asarray(data["betas"], dtype=np.float32)[:model.num_betas]
         betas[:len(source_betas)] = source_betas
@@ -123,7 +128,7 @@ def convert(root: str, output_dir: str, body_models: str, datasets: Optional[Lis
     if datasets:
         files = [f for f in files if os.path.relpath(f, root).split(os.sep)[0] in datasets]
     writers = {"train": PedRecDfWriter(0), "val": PedRecDfWriter(1)}
-    for i, path in enumerate(files):
+    for path in tqdm(files, desc="AMASS", unit="seq", dynamic_ncols=True):
         data = np.load(path)
         if "poses" not in data or len(data["poses"]) < 10:
             continue
@@ -144,8 +149,6 @@ def convert(root: str, output_dir: str, body_models: str, datasets: Optional[Lis
         split = "val" if zlib.crc32(name.encode()) % val_every == 0 else "train"
         writers[split].add(Sequence("AMASS", name, dataset, p2d, p3d, supported, IMG_WIDTH, IMG_HEIGHT,
                                     source_fps / step), image_frames=None, sequence_fps=fps)
-        if (i + 1) % 100 == 0:
-            print(f"{i + 1}/{len(files)} sequences")
     for split, writer in writers.items():
         writer.save(None, os.path.join(output_dir, f"amass_{split}_seq.pkl"))
 

@@ -16,11 +16,14 @@ sys.path.append('.')
 import argparse
 import os
 import shutil
+from typing import Optional
 
 import numpy as np
+from tqdm import tqdm
 
 from pedrec.configs.default_paths import get_data_root
-from pedrec.tools.datasets.pedrec_df_writer import J, PedRecDfWriter, Sequence, extract_frames, to_pedrec_joints
+from pedrec.tools.datasets.pedrec_df_writer import (J, FrameExtractor, PedRecDfWriter, Sequence, _check_scale,
+                                                    image_scale, to_pedrec_joints)
 
 TRAIN_CAMERAS = [0, 1, 2, 4, 5, 6, 7, 8]
 # 28 joints: 0 spine3, 1 spine4, 2 spine2, 3 spine, 4 pelvis, 5 neck, 6 head, 7 head_top, 8 l_clavicle, 9 l_shoulder,
@@ -56,15 +59,18 @@ def _image_size(path: str, default):
     return (img.shape[1], img.shape[0]) if img is not None else default
 
 
-def convert_train(root: str, output_dir: str, image_step: int, subjects=range(1, 9), cameras=TRAIN_CAMERAS):
+def convert_train(root: str, output_dir: str, image_step: int, subjects=range(1, 9), cameras=TRAIN_CAMERAS,
+                  max_image_size: Optional[int] = 1024, workers: Optional[int] = None):
     from scipy.io import loadmat
     writer = PedRecDfWriter(dataset_type=0)
-    for subject in subjects:
-        for seq in (1, 2):
+    sequences = [(subject, seq) for subject in subjects for seq in (1, 2)]
+    with FrameExtractor(workers, total=len(sequences) * len(cameras), desc="MPI-INF-3DHP train") as extractor:
+        for subject, seq in sequences:
             seq_dir = os.path.join(root, f"S{subject}", f"Seq{seq}")
             annot_path = os.path.join(seq_dir, "annot.mat")
             if not os.path.isfile(annot_path):
-                print(f"missing {annot_path}, skipped")
+                extractor.progress.write(f"missing {annot_path}, skipped")
+                extractor.progress.update(len(cameras))
                 continue
             annot = loadmat(annot_path)
             for cam in cameras:
@@ -72,20 +78,19 @@ def convert_train(root: str, output_dir: str, image_step: int, subjects=range(1,
                 joints_2d = np.asarray(annot["annot2"][cam][0], dtype=np.float64).reshape(-1, 28, 2)
                 joints_3d = np.asarray(annot["annot3"][cam][0], dtype=np.float64).reshape(-1, 28, 3)
                 width, height, fps = _video_info(video) if os.path.isfile(video) else (2048, 2048, 25.0)
-                p2d, supported = to_pedrec_joints(joints_2d, MAPPING_28)
+                scale = image_scale(width, height, max_image_size)
+                p2d, supported = to_pedrec_joints(joints_2d * scale, MAPPING_28)
                 p3d, _ = to_pedrec_joints(joints_3d, MAPPING_28)
                 name = f"S{subject}_Seq{seq}_cam{cam}"
-                image_frames = None
-                if os.path.isfile(video):
-                    image_frames = extract_frames(video, os.path.join(output_dir, "images", name),
-                                                  np.arange(0, len(p2d), image_step))
-                writer.add(Sequence("MPI-INF-3DHP", name, f"S{subject}", p2d, p3d, supported, width, height, fps),
-                           image_frames)
+                sequence = Sequence("MPI-INF-3DHP", name, f"S{subject}", p2d, p3d, supported,
+                                    int(round(width * scale)), int(round(height * scale)), fps)
+                extractor.submit(video, os.path.join(output_dir, "images", name), np.arange(0, len(p2d), image_step),
+                                 lambda frames, sequence=sequence: writer.add(sequence, frames), scale)
     writer.save(os.path.join(output_dir, "mpi_inf_3dhp_train_pedrec.pkl"),
                 os.path.join(output_dir, "mpi_inf_3dhp_train_seq.pkl"))
 
 
-def convert_test(root: str, output_dir: str, image_step: int):
+def convert_test(root: str, output_dir: str, image_step: int, max_image_size: Optional[int] = 1024):
     import h5py
     writer = PedRecDfWriter(dataset_type=1)
     for subject in range(1, 7):
@@ -101,20 +106,31 @@ def convert_test(root: str, output_dir: str, image_step: int):
         p2d, supported = to_pedrec_joints(joints_2d, MAPPING_17)
         p3d, _ = to_pedrec_joints(joints_3d, MAPPING_17)
         name = f"TS{subject}"
-        image_dir = os.path.join(output_dir, "images", name)
-        os.makedirs(image_dir, exist_ok=True)
-        frames = [f for f in range(0, len(p2d), image_step) if valid[f]]
-        for f in frames:  # images are provided as files: copy into the common layout
-            source = os.path.join(ts_dir, "imageSequence", f"img_{f + 1:06d}.jpg")
-            target = os.path.join(image_dir, f"img_{f + 1:05d}.jpg")
-            if os.path.isfile(source) and not os.path.isfile(target):
-                shutil.copyfile(source, target)
-        image_frames = np.array([f for f in frames if os.path.isfile(os.path.join(image_dir, f"img_{f + 1:05d}.jpg"))])
         width, height = _image_size(os.path.join(ts_dir, "imageSequence", "img_000001.jpg"),
                                     (2048, 2048) if subject <= 4 else (1920, 1080))
+        scale = image_scale(width, height, max_image_size)
+        image_dir = os.path.join(output_dir, "images", name)
+        os.makedirs(image_dir, exist_ok=True)
+        _check_scale(image_dir, scale)
+        frames = [f for f in range(0, len(p2d), image_step) if valid[f]]
+        for f in tqdm(frames, desc=f"MPI-INF-3DHP {name}", unit="img", dynamic_ncols=True):
+            # images are provided as files: copy / resize into the common layout
+            source = os.path.join(ts_dir, "imageSequence", f"img_{f + 1:06d}.jpg")
+            target = os.path.join(image_dir, f"img_{f + 1:05d}.jpg")
+            if not os.path.isfile(source) or os.path.isfile(target):
+                continue
+            if scale == 1.0:
+                shutil.copyfile(source, target)
+            else:
+                import cv2
+                img = cv2.imread(source)
+                img = cv2.resize(img, (int(round(img.shape[1] * scale)), int(round(img.shape[0] * scale))),
+                                 interpolation=cv2.INTER_AREA)
+                cv2.imwrite(target, img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        image_frames = np.array([f for f in frames if os.path.isfile(os.path.join(image_dir, f"img_{f + 1:05d}.jpg"))])
         fps = 50.0 if subject <= 4 else 25.0
-        writer.add(Sequence("MPI-INF-3DHP", name, name, p2d, p3d, supported, width, height, fps, valid=valid),
-                   image_frames)
+        writer.add(Sequence("MPI-INF-3DHP", name, name, p2d * scale, p3d, supported, int(round(width * scale)),
+                            int(round(height * scale)), fps, valid=valid), image_frames)
     writer.save(os.path.join(output_dir, "mpi_inf_3dhp_val_pedrec.pkl"),
                 os.path.join(output_dir, "mpi_inf_3dhp_val_seq.pkl"))
 
@@ -125,10 +141,15 @@ def main(argv=None):
                         help="Directory with S1..S8 / test set.")
     parser.add_argument("--output-dir", default=None, help="Default: --root")
     parser.add_argument("--image-step", type=int, default=10, help="Extract every n-th frame as image.")
+    parser.add_argument("--max-image-size", type=int, default=1024,
+                        help="Downscale the 2048x2048 images to this size (longer side), 0 = original size.")
+    parser.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
+    parser.add_argument("--cameras", nargs="*", type=int, default=TRAIN_CAMERAS)
     args = parser.parse_args(argv)
     output_dir = args.output_dir or args.root
-    convert_train(args.root, output_dir, args.image_step)
-    convert_test(args.root, output_dir, args.image_step)
+    convert_train(args.root, output_dir, args.image_step, cameras=args.cameras, max_image_size=args.max_image_size,
+                  workers=args.workers)
+    convert_test(args.root, output_dir, args.image_step, max_image_size=args.max_image_size)
 
 
 if __name__ == "__main__":

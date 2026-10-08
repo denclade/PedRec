@@ -56,11 +56,7 @@ def _check_outputs(image_df: str, seq_df: str, expected_images: int):
     return df
 
 
-def test_mpi_inf_3dhp(tmp_path):
-    scipy_io = pytest.importorskip("scipy.io")
-    h5py = pytest.importorskip("h5py")
-    from pedrec.tools.datasets.convert_mpi_inf_3dhp import convert_train, convert_test
-    root = tmp_path / "3dhp"
+def _make_3dhp_train(root, scipy_io):
     seq_dir = root / "S1" / "Seq1"
     joints = _person(FRAMES, 28)
     annot2 = np.empty((14, 1), dtype=object)
@@ -71,6 +67,32 @@ def test_mpi_inf_3dhp(tmp_path):
     os.makedirs(seq_dir)
     scipy_io.savemat(str(seq_dir / "annot.mat"), {"annot2": annot2, "annot3": annot3})
     _video(str(seq_dir / "imageSequence" / "video_0.avi"), FRAMES, fourcc="MJPG")
+
+
+def test_mpi_inf_3dhp_downscaled_parallel(tmp_path):
+    scipy_io = pytest.importorskip("scipy.io")
+    from pedrec.tools.datasets.convert_mpi_inf_3dhp import convert_train
+    root = tmp_path / "3dhp"
+    _make_3dhp_train(root, scipy_io)
+    convert_train(str(root), str(root), image_step=5, subjects=[1, 2], cameras=[0], max_image_size=0, workers=0)
+    full = read_pedrec_df(str(root / "mpi_inf_3dhp_train_pedrec.pkl"))
+    # images of the first run (original size) are replaced, joints scaled accordingly
+    convert_train(str(root), str(root), image_step=5, subjects=[1, 2], cameras=[0], max_image_size=160, workers=2)
+    half = read_pedrec_df(str(root / "mpi_inf_3dhp_train_pedrec.pkl"))
+    image = cv2.imread(str(root / "images" / "S1_Seq1_cam0" / "img_00001.jpg"))
+    assert image.shape[:2] == (120, 160)
+    for column in ("skeleton2d_left_shoulder_x", "skeleton2d_left_shoulder_y", "bb_center_x", "bb_width"):
+        assert np.allclose(half[column], full[column] * 0.5, atol=1e-3), column
+    assert list(half.columns) == list(full.columns) and len(half) == len(full) == 3
+    _check_outputs(str(root / "mpi_inf_3dhp_train_pedrec.pkl"), str(root / "mpi_inf_3dhp_train_seq.pkl"), 3)
+
+
+def test_mpi_inf_3dhp(tmp_path):
+    scipy_io = pytest.importorskip("scipy.io")
+    h5py = pytest.importorskip("h5py")
+    from pedrec.tools.datasets.convert_mpi_inf_3dhp import convert_train, convert_test
+    root = tmp_path / "3dhp"
+    _make_3dhp_train(root, scipy_io)
     convert_train(str(root), str(root), image_step=5, subjects=[1], cameras=[0])
     _check_outputs(str(root / "mpi_inf_3dhp_train_pedrec.pkl"), str(root / "mpi_inf_3dhp_train_seq.pkl"), 3)
 
@@ -155,7 +177,9 @@ def _fake_smplh_model(path: str, hands: bool = True):
         regressor[j, rng.choice(6890, 10, replace=False)] = 0.1
     weights = np.zeros((6890, 52), np.float32)
     weights[np.arange(6890), rng.integers(0, 52, 6890)] = 1
-    np.savez(path, v_template=v_template, shapedirs=np.zeros((6890, 3, 16), np.float32),
+    shapedirs = np.zeros((6890, 3, 16), np.float32)
+    shapedirs[..., 15] = rng.normal(0, 0.05, (6890, 3))  # only the last (16th) shape component has an effect
+    np.savez(path, v_template=v_template, shapedirs=shapedirs,
              posedirs=np.zeros((6890, 3, 51 * 9), np.float32), J_regressor=regressor, weights=weights,
              kintree_table=np.array([[4294967295 if p < 0 else p for p in parents], list(range(52))]),
              f=rng.integers(0, 6890, (100, 3)).astype(np.int64),
@@ -180,6 +204,12 @@ def test_amass(tmp_path, amass_layout):
     np.savez(root / "MPI_Limits" / "03099" / "op2_poses.npz", poses=poses,
              trans=np.zeros((frames, 3), np.float32), betas=np.zeros(16, np.float32), gender="male",
              mocap_framerate=120.0)
+    from pedrec.tools.datasets.convert_amass import BodyModels
+    body_models = BodyModels(str(tmp_path / "body_models"))
+    data = dict(np.load(root / "MPI_Limits" / "03099" / "op2_poses.npz"))
+    assert body_models._load("male").num_betas == 16  # not limited to 10 by smplx
+    shaped = dict(data, betas=np.eye(16, dtype=np.float32)[15])
+    assert not np.allclose(body_models.joints(data, 4, 10), body_models.joints(shaped, 4, 10))
     convert(str(root), str(root), str(tmp_path / "body_models"), None, val_every=1000)
     df = read_pedrec_df(str(root / "amass_train_seq.pkl"))
     assert len(df) == frames // 4  # 120 fps -> 30 fps

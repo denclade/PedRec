@@ -21,12 +21,13 @@ sys.path.append('.')
 import argparse
 import json
 import os
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
 from pedrec.configs.default_paths import get_data_root
-from pedrec.tools.datasets.pedrec_df_writer import (J, PedRecDfWriter, Sequence, extract_frames, farther_from,
+from pedrec.tools.datasets.pedrec_df_writer import (J, FrameExtractor, PedRecDfWriter, Sequence, farther_from,
+                                                    image_scale,
                                                     to_mm, to_pedrec_joints)
 
 # Human3.6m order: 0 pelvis, 1 r_hip, 2 r_knee, 3 r_ankle, 4 l_hip, 5 l_knee, 6 l_ankle, 7 spine, 8 thorax, 9 neck /
@@ -73,40 +74,51 @@ def _video_size(path: str):
     return size
 
 
-def convert(root: str, output_dir: str, image_step: int, val_subjects: List[str], dataset_name: str = "Fit3D"):
+def convert(root: str, output_dir: str, image_step: int, val_subjects: List[str], dataset_name: str = "Fit3D",
+            max_image_size: Optional[int] = None, workers: Optional[int] = None):
     train_dir = os.path.join(root, "train")
     subjects = sorted(d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d)))
     writers = {"train": PedRecDfWriter(0), "val": PedRecDfWriter(1)}
-    for subject in subjects:
-        split = "val" if subject in val_subjects else "train"
-        subject_dir = os.path.join(train_dir, subject)
-        for joints_file in sorted(os.listdir(os.path.join(subject_dir, "joints3d_25"))):
-            action = os.path.splitext(joints_file)[0]
-            with open(os.path.join(subject_dir, "joints3d_25", joints_file)) as f:
-                joints_all = np.asarray(json.load(f)["joints3d_25"], dtype=np.float64)
-            persons = joints_all if joints_all.ndim == 4 else joints_all[None]  # CHI3D: 2 persons per sequence
-            for camera_name, (person, joints_world) in ((c, p) for c in sorted(os.listdir(
-                    os.path.join(subject_dir, "camera_parameters"))) for p in enumerate(persons)):
-                camera_file = os.path.join(subject_dir, "camera_parameters", camera_name, f"{action}.json")
-                if not os.path.isfile(camera_file):
-                    continue
-                with open(camera_file) as f:
-                    camera = json.load(f)
-                joints_cam = world_to_camera(joints_world, camera)
-                intrinsics = camera.get("intrinsics_w_distortion") or camera["intrinsics_wo_distortion"]
-                joints_2d = project_with_distortion(joints_cam, intrinsics)
-                p2d, supported = to_pedrec_joints(joints_2d, MAPPING_25)
-                p3d, _ = to_pedrec_joints(joints_cam, MAPPING_25)
-                p3d = to_mm(p3d)
-                name = f"{subject}_{action.replace(' ', '_')}_{camera_name}" + (f"_p{person}" if len(persons) > 1 else "")
-                video = os.path.join(subject_dir, "videos", camera_name, f"{action}.mp4")
-                width, height = _video_size(video) if os.path.isfile(video) else (900, 900)
-                image_frames = None
-                if os.path.isfile(video):
-                    image_frames = extract_frames(video, os.path.join(output_dir, "images", name),
-                                                  np.arange(0, len(p2d), image_step))
-                writers[split].add(Sequence(dataset_name, name, subject, p2d, p3d, supported, width, height, FPS),
-                                   image_frames)
+    total = sum(len(os.listdir(os.path.join(train_dir, s, "joints3d_25"))) *
+                len(os.listdir(os.path.join(train_dir, s, "camera_parameters"))) for s in subjects)
+    with FrameExtractor(workers, total=total, desc=dataset_name) as extractor:
+        for subject in subjects:
+            split = "val" if subject in val_subjects else "train"
+            subject_dir = os.path.join(train_dir, subject)
+            for joints_file in sorted(os.listdir(os.path.join(subject_dir, "joints3d_25"))):
+                action = os.path.splitext(joints_file)[0]
+                with open(os.path.join(subject_dir, "joints3d_25", joints_file)) as f:
+                    joints_all = np.asarray(json.load(f)["joints3d_25"], dtype=np.float64)
+                persons = joints_all if joints_all.ndim == 4 else joints_all[None]  # CHI3D: 2 persons per sequence
+                for camera_name in sorted(os.listdir(os.path.join(subject_dir, "camera_parameters"))):
+                    camera_file = os.path.join(subject_dir, "camera_parameters", camera_name, f"{action}.json")
+                    if not os.path.isfile(camera_file):
+                        extractor.progress.update(1)
+                        continue
+                    with open(camera_file) as f:
+                        camera = json.load(f)
+                    video = os.path.join(subject_dir, "videos", camera_name, f"{action}.mp4")
+                    width, height = _video_size(video) if os.path.isfile(video) else (900, 900)
+                    scale = image_scale(width, height, max_image_size)
+                    sequences = []
+                    for person, joints_world in enumerate(persons):
+                        joints_cam = world_to_camera(joints_world, camera)
+                        intrinsics = camera.get("intrinsics_w_distortion") or camera["intrinsics_wo_distortion"]
+                        joints_2d = project_with_distortion(joints_cam, intrinsics) * scale
+                        p2d, supported = to_pedrec_joints(joints_2d, MAPPING_25)
+                        p3d, _ = to_pedrec_joints(joints_cam, MAPPING_25)
+                        p3d = to_mm(p3d)
+                        sequences.append(Sequence(dataset_name, f"{subject}_{action.replace(' ', '_')}_{camera_name}",
+                                                  subject, p2d, p3d, supported, int(round(width * scale)),
+                                                  int(round(height * scale)), FPS,
+                                                  extra={"person": person} if len(persons) > 1 else {}))
+                    name = sequences[0].name
+
+                    def add(frames, sequences=sequences, writer=writers[split]):
+                        for sequence in sequences:  # all persons share the images of the camera
+                            writer.add(sequence, frames)
+                    extractor.submit(video, os.path.join(output_dir, "images", name),
+                                     np.arange(0, len(sequences[0].joints_2d), image_step), add, scale)
     prefix = dataset_name.lower()
     for split, writer in writers.items():
         writer.save(os.path.join(output_dir, f"{prefix}_{split}_pedrec.pkl"),
@@ -120,8 +132,11 @@ def main(argv=None):
     parser.add_argument("--image-step", type=int, default=10, help="Extract every n-th frame as image.")
     parser.add_argument("--val-subjects", nargs="*", default=["s11"], help="Subjects used for validation.")
     parser.add_argument("--name", default="Fit3D", help="Dataset name (Fit3D, HumanSC3D, CHI3D).")
+    parser.add_argument("--max-image-size", type=int, default=0, help="Downscale the images (longer side), 0 = off.")
+    parser.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
     args = parser.parse_args(argv)
-    convert(args.root, args.output_dir or args.root, args.image_step, args.val_subjects, args.name)
+    convert(args.root, args.output_dir or args.root, args.image_step, args.val_subjects, args.name,
+            args.max_image_size, args.workers)
 
 
 if __name__ == "__main__":
