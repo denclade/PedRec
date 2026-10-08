@@ -89,13 +89,34 @@ class ImageSampler:
             self.cache = {}
         self.changed = False
 
-    def paths(self, df_path: str, pattern: str, step: int = 1) -> List[str]:
+    def _key(self, df_path: str, *parts) -> str:
         stat = os.stat(df_path)
-        key = f"{os.path.abspath(df_path)}|{stat.st_size}|{stat.st_mtime_ns}|{pattern}|{step}|{self.samples}"
-        if key not in self.cache:
-            import pandas as pd
+        return "|".join([os.path.abspath(df_path), str(stat.st_size), str(stat.st_mtime_ns)] + [str(p) for p in parts])
+
+    def _read(self, df_path: str):
+        """Reads the dataframe (once per run), drops cache entries of older versions of it."""
+        import pandas as pd
+        if getattr(self, "_df_path", None) != df_path:
             print(f"  reading {df_path} ...", flush=True)
-            df = pd.read_pickle(df_path)
+            self._df, self._df_path = pd.read_pickle(df_path), df_path
+            current = self._key(df_path)
+            self.cache = {k: v for k, v in self.cache.items()
+                          if not k.startswith(os.path.abspath(df_path) + "|") or k.startswith(current + "|")}
+            self.changed = True
+        return self._df
+
+    def img_dirs(self, df_path: str) -> List[str]:
+        """All image directories of the dataframe (e.g. H36M: <subject>/Images/<video name>)."""
+        key = self._key(df_path, "img_dirs")
+        if key not in self.cache:
+            self.cache[key] = sorted(self._read(df_path)["img_dir"].astype(str).unique().tolist())
+            self.changed = True
+        return self.cache[key]
+
+    def paths(self, df_path: str, pattern: str, step: int = 1) -> List[str]:
+        key = self._key(df_path, pattern, step, self.samples)
+        if key not in self.cache:
+            df = self._read(df_path)
             rows = np.arange(0, len(df), step)
             rows = rows[np.unique(np.linspace(0, len(rows) - 1, min(self.samples, len(rows))).astype(int))] \
                 if len(rows) else rows
@@ -105,7 +126,6 @@ class ImageSampler:
                 cam_name = os.path.basename(os.path.normpath(img_dir))
                 paths.append(os.path.join(img_dir, pattern.format(id=str(int(img_id)).zfill(5), type=img_type,
                                                                   cam_name=cam_name)))
-            self.cache = {k: v for k, v in self.cache.items() if not k.startswith(os.path.abspath(df_path) + "|")}
             self.cache[key] = paths
             self.changed = True
         return self.cache[key]
@@ -186,11 +206,27 @@ def check_pedrec_training(paths, datasets: str, sampler: ImageSampler) -> Group:
                                          "mise run data:h36m:images")
         if images_ok:
             group.add(f"Human3.6m {split} videos", INFO, f"{videos} videos (only needed to extract the images)")
-        else:
+            continue
+        fix = "mise run download:datasets:info h36m  (registration, only the \"Videos\"), then mise run data:h36m:images"
+        df_path = os.path.join(root, filename)
+        if not videos or not os.path.isfile(df_path):
             group.add(f"Human3.6m {split} videos", OK if videos else MISSING,
-                      f"{videos} videos below {os.path.join(root, 'S*', 'Videos')}",
-                      "mise run download:datasets:info h36m  (registration, only the \"Videos\"), then mise run "
-                      "data:h36m:images")
+                      f"{videos} videos below {os.path.join(root, 'S*', 'Videos')}", fix)
+            continue
+        missing: Dict[str, List[str]] = {}
+        needed: Dict[str, int] = {}
+        for img_dir in sampler.img_dirs(df_path):  # <subject>/Images/<video name>
+            subject, _, name = img_dir.replace("\\", "/").split("/")
+            needed[subject] = needed.get(subject, 0) + 1
+            if not os.path.isfile(os.path.join(root, subject, "Videos", f"{name}.mp4")):
+                missing.setdefault(subject, []).append(f"{name}.mp4")
+        if not missing:
+            group.add(f"Human3.6m {split} videos", OK, f"all {sum(needed.values())} videos present")
+        else:
+            detail = "; ".join(f"{subject}: {len(names)}/{needed[subject]} missing (e.g. {sorted(names)[0]})"
+                               for subject, names in sorted(missing.items()))
+            group.add(f"Human3.6m {split} videos", PARTIAL if len(missing) < len(needed) or videos else MISSING,
+                      detail + " - subject archive incomplete?", fix)
     # SIM
     check_df_with_images(group, "SIM-ROM (train)", paths.sim_train_dir, paths.sim_train_filename, sampler, SIM_PATTERN,
                          1, "mise run download:datasets:pedrec --parts rom",

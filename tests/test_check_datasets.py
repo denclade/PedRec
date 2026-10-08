@@ -89,3 +89,16 @@ def test_merge_steps():
         ["a", "mise run download:datasets:pedrec --parts h36m rom"]
     assert cd.merge_steps([f"mise run download:datasets:coco --parts {p}" for p in ("annotations", "train", "val")]) \
         == ["mise run download:datasets:coco"]
+
+def test_h36m_missing_videos_per_subject(tmp_path):
+    paths = get_experiment_paths(str(tmp_path))
+    videos = ["S1/Images/Walking 1.54138969", "S5/Images/Directions 1.54138969", "S5/Images/Directions 2.54138969"]
+    _df(os.path.join(paths.h36m_train_dir, paths.h36m_train_filename), videos, [1, 1, 1])
+    for img_dir in videos[:2]:  # Directions 2 of S5 is missing (incomplete subject archive)
+        subject, _, name = img_dir.split("/")
+        _touch(os.path.join(paths.h36m_train_dir, subject, "Videos", f"{name}.mp4"))
+    sampler = cd.ImageSampler(os.devnull, samples=10)
+    group = cd.check_pedrec_training(paths, str(tmp_path / "datasets"), sampler)
+    item = _items(group)["Human3.6m train videos"]
+    assert item.status == cd.PARTIAL and "S5: 1/2 missing (e.g. Directions 2.54138969.mp4)" in item.detail
+    assert "S1" not in item.detail and item.fix.endswith("data:h36m:images")

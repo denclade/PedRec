@@ -84,6 +84,16 @@ def test_h36m_images(tmp_path):
     assert sorted(os.listdir(image_dir)) == ["img_00001.jpg", "img_00005.jpg", "img_00010.jpg"]
 
 
+def test_h36m_images_missing_videos_summary(tmp_path, capsys):
+    base = tmp_path / "Human3.6m" / "train"
+    os.makedirs(base)
+    pd.DataFrame({"img_dir": pd.Categorical([f"S5/Images/{n}.54138969" for n in ("Eating", "Eating 1", "Photo")]),
+                  "img_id": np.array([1, 1, 1], np.uint32)}).to_pickle(base / "h36m_train_pedrec.pkl")
+    dd.extract_h36m_images(str(tmp_path), ["train"], workers=0, steps={"train": 1})
+    out = capsys.readouterr().out
+    assert "train/S5: 3 of 3 videos missing" in out and len(out.strip().splitlines()) == 1  # not one per video
+
+
 def _zip_with_macos_junk(path, folder: str, files: dict):
     """Archive with a top level folder + __MACOSX/._* metadata (as created by the macOS Finder)."""
     with zipfile.ZipFile(path, "w") as z:

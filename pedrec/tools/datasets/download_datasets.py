@@ -248,18 +248,25 @@ def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92, wor
         step = (steps or H36M_STEPS)[split]
         df = df.loc[range(0, len(df), step)]  # the rows the training loads (get_subsampled_df)
         groups = df.groupby(df["img_dir"].astype(str), observed=True)["img_id"]
+        missing: Dict[str, List[str]] = {}
+        needed: Dict[str, int] = {}
         with FrameExtractor(workers, total=groups.ngroups, desc=f"Human3.6m {split}") as extractor:
             for img_dir, ids in groups:
                 subject, _, name = img_dir.replace("\\", "/").split("/")
                 video = os.path.join(base, subject, "Videos", f"{name}.mp4")
                 frames = ids.to_numpy().astype(int) - 1
+                needed[subject] = needed.get(subject, 0) + 1
 
-                def check(written, img_dir=img_dir, video=video, expected=len(set(frames))):
+                def check(written, img_dir=img_dir, name=name, subject=subject, expected=len(set(frames))):
                     if written is None:
-                        extractor.progress.write(f"missing video {video}")
+                        missing.setdefault(subject, []).append(f"{name}.mp4")
                     elif len(written) != expected:
                         extractor.progress.write(f"  {img_dir}: only {len(written)} of {expected} frames in the video")
                 extractor.submit(video, os.path.join(base, img_dir), frames, check, quality=quality)
+        for subject, names in sorted(missing.items()):  # one line per subject instead of one per video
+            log(f"{split}/{subject}: {len(names)} of {needed[subject]} videos missing in "
+                f"{os.path.join(base, subject, 'Videos')} (e.g. {', '.join(sorted(names)[:3])}); the subject archive "
+                f"is probably incomplete, download / extract it again (see: info h36m)")
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
