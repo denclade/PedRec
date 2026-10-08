@@ -77,9 +77,11 @@ def test_h36m_images(tmp_path):
     writer.release()
     pd.DataFrame({"img_dir": pd.Categorical(["S9/Images/Walking 1.54138969"] * 3),
                   "img_id": np.array([1, 5, 10], np.uint32)}).to_pickle(base / "h36m_val_pedrec.pkl")
-    dd.extract_h36m_images(str(tmp_path), ["val"])
-    images = sorted(os.listdir(base / "S9" / "Images" / "Walking 1.54138969"))
-    assert images == ["img_00001.jpg", "img_00005.jpg", "img_00010.jpg"]
+    image_dir = base / "S9" / "Images" / "Walking 1.54138969"
+    dd.extract_h36m_images(str(tmp_path), ["val"], workers=0)  # default: every 64th row, as the validation
+    assert sorted(os.listdir(image_dir)) == ["img_00001.jpg"]
+    dd.extract_h36m_images(str(tmp_path), ["val"], workers=0, steps={"val": 1})
+    assert sorted(os.listdir(image_dir)) == ["img_00001.jpg", "img_00005.jpg", "img_00010.jpg"]
 
 
 def _zip_with_macos_junk(path, folder: str, files: dict):

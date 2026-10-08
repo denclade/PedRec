@@ -49,12 +49,14 @@ MEBOW body orientation labels for COCO (Wu et al., CVPR 2020, https://github.com
     datasets/COCO/annotations/. Needed by the training stage p2d3d_c_o (orientation).""",
     "h36m": """\
 Human3.6m (Ionescu et al., TPAMI 2014, http://vision.imar.ro/human3.6m), registration + non-commercial license:
-    1. Register / log in, download per subject (S1, S5, S6, S7, S8 -> Human3.6m/train, S9, S11 -> Human3.6m/val):
-       Videos, "D2 Positions", "D3 Positions mono" (MyPoseFeatures) and the bounding boxes (MySegmentsMat), extracted
-       as Human3.6m/<split>/<subject>/{Videos,MyPoseFeatures,MySegmentsMat}.
+    1. Register / log in, download the "Videos" of the subjects S1, S5, S6, S7, S8 (-> Human3.6m/train) and S9, S11
+       (-> Human3.6m/val), extracted as Human3.6m/<split>/<subject>/Videos/*.mp4. With the PedRec dataframes only
+       the videos are needed ("D2 Positions", "D3 Positions mono" and the bounding boxes (MySegmentsMat) only to
+       regenerate the dataframes with data:convert:h36m).
     2. mise run download:datasets:pedrec   (dataframes h36m_{train,val}_pedrec.pkl)
-    3. mise run data:h36m:images           (extracts the frames used by the dataframes)
-       Alternatively regenerate everything from the raw data: mise run data:convert:h36m""",
+    3. mise run data:h36m:images           (extracts the frames the training uses: every 10th training frame
+       (~156k images), every 64th validation frame (~8.5k); --val-step 1 for all validation frames (~0.5M images,
+       needed by results:h36m), --train-step 1 for all training frames (~1.5M images))""",
     "3dhp": """\
 MPI-INF-3DHP (Mehta et al., 3DV 2017, https://vcai.mpi-inf.mpg.de/3dhp-dataset), non-commercial research license:
     Read the license on the project page, then: mise run download:datasets:3dhp --accept-license
@@ -249,8 +251,15 @@ def get_coco(datasets: str, parts: List[str], keep_archives: bool):
         log(INFO["mebow"])
 
 
-def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92, workers: Optional[int] = None):
-    """Extracts the frames referenced by the H36M dataframes from the (registered) Human3.6m videos."""
+H36M_STEPS = {"train": 10, "val": 64}  # systematic subsampling of the training / validation (dataset_configs.py)
+
+
+def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92, workers: Optional[int] = None,
+                        steps: Optional[dict] = None):
+    """
+    Extracts the frames of the H36M dataframes from the (registered) Human3.6m videos. Only every step-th dataframe
+    row is used (as the systematic subsampling of the training: train 10, val 64; 1 = all ~2.1M frames).
+    """
     from pedrec.tools.datasets.pedrec_df_writer import FrameExtractor
     from pedrec.utils.pandas_helper import read_pedrec_df
     for split in splits:
@@ -259,6 +268,8 @@ def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92, wor
         if not os.path.isfile(df_path):
             raise FileNotFoundError(f"{df_path} missing, run mise run download:datasets:pedrec first")
         df = read_pedrec_df(df_path)
+        step = (steps or H36M_STEPS)[split]
+        df = df.loc[range(0, len(df), step)]  # the rows the training loads (get_subsampled_df)
         groups = df.groupby(df["img_dir"].astype(str), observed=True)["img_id"]
         with FrameExtractor(workers, total=groups.ngroups, desc=f"Human3.6m {split}") as extractor:
             for img_dir, ids in groups:
@@ -379,6 +390,11 @@ def main(argv=None):
     p.add_argument("--parts", nargs="*", default=["annotations", "val", "train"], choices=["annotations", "val", "train"])
     p = sub.add_parser("h36m-images", help="Extract the frames of the H36M dataframes from the registered videos")
     p.add_argument("--splits", nargs="*", default=["train", "val"], choices=["train", "val"])
+    p.add_argument("--train-step", type=int, default=H36M_STEPS["train"],
+                   help="Every n-th frame of the training dataframe (default 10 = what the training uses).")
+    p.add_argument("--val-step", type=int, default=H36M_STEPS["val"],
+                   help="Every n-th frame of the validation dataframe (default 64 = training validation and "
+                        "eval:h36m; 1 = all frames, needed by results:h36m).")
     p.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
     p = sub.add_parser("3dhp", help="MPI-INF-3DHP via the official download scripts")
     p.add_argument("--accept-license", action="store_true")
@@ -406,7 +422,8 @@ def main(argv=None):
     elif args.command == "coco":
         get_coco(datasets, args.parts, args.keep_archives)
     elif args.command == "h36m-images":
-        extract_h36m_images(datasets, args.splits, workers=args.workers)
+        extract_h36m_images(datasets, args.splits, workers=args.workers,
+                            steps={"train": args.train_step, "val": args.val_step})
     elif args.command == "3dhp":
         get_3dhp(datasets, args.accept_license, args.subjects, args.cameras, args.keep_archives)
     elif args.command == "aistpp":
