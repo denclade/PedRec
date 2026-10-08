@@ -34,6 +34,7 @@ SIM_PATTERN = "view_{cam_name}-frame_{id}.{type}"  # SIM-ROM / SIM-Circle / SIM-
 IMG_PATTERN = "img_{id}.{type}"  # Human3.6m and the converted datasets
 H36M_STEPS = {"train": 10, "val": 64}  # rows the training / validation loads (systematic subsampling)
 COCO_IMAGES = {"train": 118287, "val": 5000}
+AMASS_ROM_SUBSETS = ("PosePrior", "MPI_Limits")  # range of motion subset; current AMASS downloads name it PosePrior
 
 
 @dataclass
@@ -287,8 +288,9 @@ def check_extra_3d(datasets: str, data_root: str, sampler: ImageSampler) -> Tupl
             raw_detail = f"{raw} sequences in {', '.join(subsets) or 'no subsets'}; SMPL+H body model: " + \
                          (body_model or "missing (models/body_models/smplh/{male,female,neutral}/model.npz)")
             get = "mise run download:datasets:info amass (registration, + SMPL+H body model)"
-            if raw and "MPI_Limits" not in subsets:
-                raw_detail += "; MPI_Limits (range of motion) missing"
+            has_rom = any(name in subsets for name in AMASS_ROM_SUBSETS)
+            if raw and not has_rom:
+                raw_detail += "; PosePrior / MPI_Limits (range of motion) missing"
         kind = "pedrec" if extra.has_images else "seq"
         train_path = extra.path(datasets, "train", kind)
         converted[extra.name] = train_path is not None
@@ -304,8 +306,9 @@ def check_extra_3d(datasets: str, data_root: str, sampler: ImageSampler) -> Tupl
             group.add(f"{extra.title} images", OK if present == checked else PARTIAL,
                       f"{present}/{checked} sampled images present"
                       + (f", e.g. missing {first_missing}" if first_missing else ""), "" if present == checked else convert)
-        if extra.name == "amass" and raw and "MPI_Limits" not in subsets:
-            group.add("AMASS MPI_Limits", OPTIONAL, "range of motion subset not converted", get)
+        if extra.name == "amass" and raw and not has_rom:
+            group.add("AMASS PosePrior", OPTIONAL, "range of motion subset (PosePrior, formerly MPI_Limits) not "
+                      "downloaded", get)
     return group, converted
 
 
@@ -405,7 +408,8 @@ def run(data_root: Optional[str] = None, samples: int = 200, color: Optional[boo
                          if item.status in (MISSING, PARTIAL) and item.fix])
     recommendations = []
     if not converted.get("amass"):
-        recommendations.append("3D lifter: AMASS with at least MPI_Limits (joint limits / range of motion) and CMU "
+        recommendations.append("3D lifter: AMASS with at least PosePrior (= MPI_Limits, joint limits / range of "
+                               "motion) and CMU "
                                "gives far more pose variety than H36M + SIM (mise run download:datasets:info amass)")
     if not converted.get("fit3d") and not converted.get("aistpp"):
         recommendations.append("3D head of PedRecNet: real images of extreme poses from Fit3D (fitness, registration) "

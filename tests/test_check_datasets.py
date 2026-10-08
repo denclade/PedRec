@@ -78,7 +78,7 @@ def test_ready_for_pedrec_training(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "train:pedrec   ready" in out and "train:all      not ready" in out
     assert "-> mise run data:convert:aistpp" in out  # downloaded, not converted
-    assert "Fit3D images" in out and "AMASS with at least MPI_Limits" in out
+    assert "Fit3D images" in out and "AMASS with at least PosePrior" in out
 
 
 def test_merge_steps():
@@ -87,3 +87,20 @@ def test_merge_steps():
         ["a", "mise run download:datasets:pedrec --parts h36m rom"]
     assert cd.merge_steps([f"mise run download:datasets:coco --parts {p}" for p in ("annotations", "train", "val")]) \
         == ["mise run download:datasets:coco"]
+
+
+def test_amass_range_of_motion_subset(tmp_path):
+    datasets = tmp_path / "datasets"
+    _df(str(datasets / "AMASS" / "amass_train_seq.pkl"), ["images/x"], [1])
+    _touch(str(datasets / "AMASS" / "CMU" / "01" / "01_01_poses.npz"))
+    sampler = cd.ImageSampler(os.devnull, samples=10)
+    group, converted = cd.check_extra_3d(str(datasets), str(tmp_path), sampler)
+    assert converted["amass"] and "AMASS PosePrior" in _items(group)
+    for name in ("PosePrior", "MPI_Limits"):  # current and former name of the range of motion subset
+        _touch(str(datasets / "AMASS" / name / "03099" / "op2_poses.npz"))
+        group, _ = cd.check_extra_3d(str(datasets), str(tmp_path), sampler)
+        assert "AMASS PosePrior" not in _items(group)
+        assert "range of motion) missing" not in _items(group)["AMASS converted"].detail
+        os.remove(datasets / "AMASS" / name / "03099" / "op2_poses.npz")
+        os.rmdir(datasets / "AMASS" / name / "03099")
+        os.rmdir(datasets / "AMASS" / name)

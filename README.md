@@ -135,7 +135,7 @@ non-commercial research (COCO annotations: CC BY 4.0), check them before use.
 | **MPI-INF-3DHP** (new) | 3D, 8 actors, green screen + outdoor test set, 14 cameras | PedRecNet 3D (images), lifter | `mise run download:datasets:3dhp --accept-license`, `mise run data:convert:3dhp` |
 | **Fit3D** (new) | fitness exercises with large range of motion, 4 cameras; also HumanSC3D / CHI3D | PedRecNet 3D (images), lifter | registration (`info fit3d`), `mise run data:convert:fit3d` |
 | **AIST++** (new) | dance (jumps, spins, floor moves), 9 views, 10M frames | PedRecNet 3D (images), lifter | `mise run download:datasets:aistpp --accept-terms [--views c01 c05 --max-sequences 300]` (annotations 0.9 GB, videos: size printed before the download, a few hundred GB for all views; `--annotations-only` for the lifter only), `mise run data:convert:aistpp` |
-| **AMASS** (new) | 40+ hours of mocap as SMPL-H, incl. **MPI_Limits** (joint limits / range of motion) | lifter only (no images) | registration (`info amass`), `mise run data:convert:amass` |
+| **AMASS** (new) | 40+ hours of mocap as SMPL-H, incl. **PosePrior** (formerly MPI_Limits: joint limits / range of motion) | lifter only (no images) | registration (`info amass`), `mise run data:convert:amass` |
 
 The converters (`pedrec/tools/datasets/convert_*.py`) write PedRec dataframes (`<name>_{train,val}_pedrec.pkl`,
 images `img_<frame>.jpg`, same columns as the H36M / SIM dataframes: 26 joints 2D + 3D in mm relative to the hip,
@@ -147,7 +147,7 @@ anyway). Expect hours for the full MPI-INF-3DHP / AIST++ conversion (all frames 
 (disable with `--no-extra-3d`, balance with e.g. `--dataset-weights coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,aistpp=0.5`)
 and `train:lifter` adds the sequences. The new datasets have no orientation labels (orientation loss masked).
 
-Recommendations: AMASS (at least MPI_Limits + CMU) gives the temporal lifter a far larger pose / motion variety than
+Recommendations: AMASS (at least PosePrior + CMU) gives the temporal lifter a far larger pose / motion variety than
 H36M + SIM; Fit3D and AIST++ add real images of extreme poses (range of motion) for the 3D head of PedRecNet,
 MPI-INF-3DHP adds outdoor / unusual camera views. BEDLAM (synthetic, many people, 2D + 3D, registration) and
 AthletePose3D (sports, CVPR 2025) are further candidates but not integrated.

@@ -124,7 +124,7 @@ description = "AIST++ -> PedRec dataframes (every 20th frame as image, all 60 fp
 run = "python pedrec/tools/datasets/convert_aistpp.py"
 
 [tasks."data:convert:amass"]
-description = "AMASS (e.g. MPI_Limits range of motion, CMU, BMLmovi) -> sequences for the 3D lifter; needs the SMPL-H model"
+description = "AMASS (e.g. PosePrior range of motion, CMU, BMLmovi) -> sequences for the 3D lifter; needs the SMPL-H model"
 run = "python pedrec/tools/datasets/convert_amass.py"
 
 # ------------------------------------------------------------------------------------------------------- demo / run

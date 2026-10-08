@@ -79,8 +79,9 @@ AIST Dance Video Database (research use, terms: https://aistdancedb.ongaaccel.jp
   limit it). --annotations-only: only the annotations (enough for the lifter sequences, no images).""",
     "amass": """\
 AMASS (Mahmood et al., ICCV 2019, https://amass.is.tue.mpg.de), registration + non-commercial license:
-    1. Register, download the "SMPL+H G" archives of the wanted datasets (recommended: MPI_Limits (range of motion),
-       CMU, BMLmovi, KIT, HDM05, TotalCapture, ...) and extract them to datasets/AMASS (-> AMASS/MPI_Limits/...).
+    1. Register, download the "SMPL+H G" archives of the wanted datasets (recommended: PosePrior (formerly
+       MPI_Limits: joint limits / range of motion), CMU, BMLmovi, KIT, HDM05, TotalCapture, ...) and extract them to
+       datasets/AMASS (-> AMASS/PosePrior/...).
     2. Body model SMPL+H (= SMPL body + MANO hands, the model AMASS is fitted with; it is hosted on the MANO site,
        not on smpl.is.tue.mpg.de, own registration): https://mano.is.tue.mpg.de -> Download -> "Extended SMPL+H
        model (used in AMASS project)" (smplh.tar.xz, npz files with 16 shape parameters), extracted to
