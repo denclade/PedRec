@@ -70,6 +70,7 @@ mise run setup               # .venv with PyTorch 2.14 (CUDA 13.0), PyQt6, ...; 
 mise run gpu:info            # check that PyTorch sees the GPU
 mise run download:models     # RT-DETR detector + backbone ImageNet weights (Hugging Face cache)
 mise run download:datasets   # dataset overview, e.g. download:datasets:pedrec / :coco (see Datasets)
+mise run data:check           # what is downloaded / converted / missing, next steps (run before training)
 mise run train:all           # train the v2 weights (see above), then:
 mise run demo --video my_video.mp4
 mise run test                # unit tests (no data / GPU needed)
@@ -118,7 +119,9 @@ Hugging Face cache. The v2 weights are trained with this code (`mise run train:a
 
 ### Datasets
 All datasets are expected below `$PEDREC_DATA_DIR/datasets` (default *data/datasets*). `mise run download:datasets`
-prints an overview, the downloads are resumable and skip existing files. Licenses: all datasets are restricted to
+prints an overview, the downloads are resumable and skip existing files. `mise run data:check` shows what is downloaded,
+converted and missing (incl. sampled images at the dataframe rows the training reads), whether `train:pedrec` /
+`train:lifter` / `train:all` can run, the commands for the next steps and the recommended additional datasets. Licenses: all datasets are restricted to
 non-commercial research (COCO annotations: CC BY 4.0), check them before use.
 
 | Dataset | Content | Used for | Get it |
