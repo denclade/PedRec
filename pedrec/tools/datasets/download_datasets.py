@@ -351,11 +351,16 @@ def get_aistpp(datasets: str, accept_terms: bool, views: List[str], max_sequence
             failed.append(f"{name}: {e}")
     with ThreadPoolExecutor(workers) as pool:
         list(tqdm(pool.map(get, missing), total=len(missing), desc="AIST++ videos", unit="video", dynamic_ncols=True))
+    failed_path = os.path.join(root, "failed_videos.txt")
+    if not failed and os.path.isfile(failed_path):
+        os.remove(failed_path)  # from an earlier run
     if failed:
-        with open(os.path.join(root, "failed_videos.txt"), "w") as f:
+        with open(failed_path, "w") as f:
             f.write("\n".join(failed) + "\n")
         log(f"{len(failed)} videos failed (see {os.path.join(root, 'failed_videos.txt')}), e.g. {failed[0]}; "
             f"run the task again to retry")
+        per_view = {view: sum(f"_{view}_" in line.split(":")[0] for line in failed) for view in views}
+        log("failed per view: " + ", ".join(f"{view} {count}" for view, count in per_view.items() if count))
     log("done, convert with: mise run data:convert:aistpp")
 
 
@@ -383,7 +388,9 @@ def main(argv=None):
     p = sub.add_parser("aistpp", help="AIST++ annotations + AIST Dance DB videos")
     p.add_argument("--accept-terms", action="store_true")
     p.add_argument("--annotations-only", action="store_true", help="Only the annotations (~0.9 GB), no videos.")
-    p.add_argument("--views", nargs="*", default=[f"c{i:02d}" for i in range(1, 10)])
+    aist_views = [f"c{i:02d}" for i in range(1, 10)]
+    p.add_argument("--views", nargs="*", default=aist_views, choices=aist_views, metavar="VIEW",
+                   help="Camera views c01 ... c09 (default: all).")
     p.add_argument("--max-sequences", type=int, default=None)
     p.add_argument("--workers", type=int, default=4)
     args = parser.parse_args(argv)

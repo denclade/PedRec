@@ -101,7 +101,8 @@ def main(argv=None):
                         help="Directory with the annotations (keypoints3d/, cameras/, ...) and videos/.")
     parser.add_argument("--output-dir", default=None, help="Default: --root")
     parser.add_argument("--image-step", type=int, default=20, help="Extract every n-th frame (60 fps) as image.")
-    parser.add_argument("--views", nargs="*", default=VIEWS)
+    parser.add_argument("--views", nargs="*", default=VIEWS, choices=VIEWS, metavar="VIEW",
+                        help="Camera views c01 ... c09 (default: all).")
     parser.add_argument("--max-image-size", type=int, default=0, help="Downscale the images (longer side), 0 = off.")
     parser.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
     args = parser.parse_args(argv)
