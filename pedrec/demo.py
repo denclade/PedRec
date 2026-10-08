@@ -1,8 +1,8 @@
 """
 PedRec demo / inference entry point.
 
-Runs the PedRec pipeline (YoloV4 detection -> PedRecNet pose / orientation -> tracking -> EHPI3D action recognition)
-on a video, an image directory, a single image or a webcam, either in the Qt GUI or headless (writing an annotated
+Runs the PedRec pipeline (RT-DETR detection -> PedRecNet pose / orientation -> ByteTrack -> ST-GCN action
+recognition) on a video, an image directory, a single image or a webcam, either in the Qt GUI or headless (writing an annotated
 video / images and optionally a JSON file with all results).
 
 Examples:
@@ -12,7 +12,8 @@ Examples:
     python pedrec/demo.py --image person.jpg --no-detector --no-tracking --no-action --headless --output out.jpg
     python pedrec/demo.py --video in.mp4 --no-pose --headless --output detections.mp4   # detector only
 
-Weights are looked up below the data root (``--data-dir`` / ``PEDREC_DATA_DIR``, default ``data``), see README.
+PedRecNet / ST-GCN weights are looked up below the data root (``--data-dir`` / ``PEDREC_DATA_DIR``, default ``data``),
+the RT-DETR detector is loaded from the Hugging Face cache (``mise run download:rtdetr``), see README.
 """
 import argparse
 import json
@@ -111,19 +112,18 @@ def get_pipeline_config(args) -> PipelineConfig:
         use_detector=not args.no_detector,
         use_pose=not args.no_pose,
         use_tracking=not args.no_tracking,
+        use_lifter=not args.no_lifter,
         use_action=not args.no_action,
-        yolo_weights=args.yolo_weights,
         pedrec_weights=args.pedrec_weights,
         ehpi3d_weights=args.ehpi3d_weights,
+        lifter_weights=args.lifter_weights,
         data_root=args.data_dir,
         detector_conf_thresh=args.detector_conf_thresh,
         human_min_score=args.human_min_score,
         action_thresh=args.action_thresh,
-        tracker=args.tracker,
-        smoothing=args.smoothing,
+        rtdetr_model=args.rtdetr_model,
         source_fps=args.source_fps,
-        runtime=RuntimeConfig(half=args.half, channels_last=args.channels_last, compile=args.compile,
-                              backend=args.backend, onnx_dir=args.onnx_dir),
+        runtime=RuntimeConfig(half=args.half, channels_last=args.channels_last, compile=args.compile),
     )
 
 
@@ -249,37 +249,31 @@ def parse_args(argv=None):
 
     components = parser.add_argument_group("components")
     components.add_argument("--no-detector", action="store_true",
-                            help="Skip YoloV4, use the full frame as the human bounding box.")
+                            help="Skip the detector, use the full frame as the human bounding box.")
     components.add_argument("--no-pose", action="store_true", help="Skip PedRecNet (detector only).")
-    components.add_argument("--no-tracking", action="store_true", help="Skip tracking / id assignment.")
-    components.add_argument("--no-action", action="store_true", help="Skip EHPI3D action recognition.")
+    components.add_argument("--no-tracking", action="store_true", help="Skip tracking / id assignment / smoothing.")
+    components.add_argument("--no-lifter", action="store_true",
+                            help="Skip the temporal 3D lifting (per frame 3D poses of PedRecNet).")
+    components.add_argument("--no-action", action="store_true", help="Skip the action recognition.")
     components.add_argument("--action-list", choices=["c01", "c01_real"], default="c01_real",
-                            help="Action classes of the EHPI3D weights (default: c01_real, 20 classes).")
-    components.add_argument("--tracker", choices=["bytetrack", "legacy"], default="bytetrack",
-                            help="bytetrack: Kalman filter + IoU association (default); legacy: optical flow on the "
-                                 "joints + pose similarity merging (original implementation).")
-    components.add_argument("--smoothing", choices=["one_euro", "mean", "none"], default="one_euro",
-                            help="Temporal smoothing of 3D pose and orientation (default one_euro; mean = original "
-                                 "2 frame mean).")
+                            help="Action classes of the action recognition weights (default: c01_real, 20 classes).")
 
     runtime = parser.add_argument_group("runtime / speed")
     runtime.add_argument("--half", action="store_true", help="fp16 autocast on CUDA (Tensor Cores).")
     runtime.add_argument("--channels-last", action="store_true", help="NHWC memory format for the convolutions.")
-    runtime.add_argument("--compile", action="store_true", help="torch.compile the networks (slow warm up).")
+    runtime.add_argument("--compile", action="store_true", help="torch.compile PedRecNet / ST-GCN (slow warm up).")
     runtime.add_argument("--fast", action="store_true", help="Shortcut for --half --channels-last on CUDA.")
-    runtime.add_argument("--backend", choices=["torch", "onnx"], default="torch",
-                         help="onnx: run the networks exported by pedrec/tools/networks/export_onnx.py with "
-                              "onnxruntime (TensorRT / CUDA execution provider).")
-    runtime.add_argument("--onnx-dir", default=None, help="Directory of the ONNX models (default <data-dir>/models/onnx).")
     runtime.add_argument("--prefetch", type=int, default=4,
                          help="Frames decoded ahead in a background thread (0 disables, default 4).")
 
     weights = parser.add_argument_group("weights")
     weights.add_argument("--data-dir", default=None, help="Data root (default: $PEDREC_DATA_DIR or 'data').")
-    weights.add_argument("--yolo-weights", default=None, help=f"Default: <data-dir>/{default_paths.YOLO_V4_WEIGHTS}")
+    weights.add_argument("--rtdetr-model", default=default_paths.RTDETR_MODEL,
+                         help=f"RT-DETR Hugging Face id or local directory (default {default_paths.RTDETR_MODEL}).")
     weights.add_argument("--pedrec-weights", default=None,
                          help=f"Default: <data-dir>/{default_paths.PEDREC_NET_WEIGHTS}")
     weights.add_argument("--ehpi3d-weights", default=None, help=f"Default: <data-dir>/{default_paths.EHPI3D_WEIGHTS}")
+    weights.add_argument("--lifter-weights", default=None, help=f"Default: <data-dir>/{default_paths.LIFTER_WEIGHTS}")
 
     thresholds = parser.add_argument_group("thresholds")
     thresholds.add_argument("--detector-conf-thresh", type=float, default=0.4)
@@ -301,6 +295,7 @@ def parse_args(argv=None):
         args.no_tracking = True
         args.no_action = True
     if args.no_tracking:
+        args.no_lifter = True
         args.no_action = True
     if args.fast:
         args.half = True

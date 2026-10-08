@@ -162,7 +162,7 @@ def get_results(experiment_name: str, flip_test: bool = False, skeleton: SKELETO
     return msjpes, pck_results, msjpe_results
 
 
-DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o"]
 
 
 def parse_args(argv=None):

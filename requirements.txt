@@ -16,7 +16,14 @@ h5py~=3.16.0
 tqdm~=4.70.1
 ijson~=3.5.1
 cdflib~=1.3.14
+# dataset downloads / conversion (ROMb.7z etc., AMASS SMPL-H joints)
+py7zr~=1.1.3
+smplx~=0.1.28
 packaging>=26.0
+# RT-DETRv2 person / object detector (weights from the Hugging Face hub, see mise run download:models)
+transformers~=5.19.0
+# PedRecNet backbone (HGNetV2-B3, ImageNet weights from the Hugging Face hub)
+timm~=1.0.30
 # GUI (pedrec/demo.py without --headless)
 PyQt6~=6.11.0
 pyqtgraph~=0.14.0

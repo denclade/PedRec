@@ -1,5 +1,5 @@
 """
-Training entry point for the EHPI3D action recognition network (SIM-C01 skeleton sequences).
+Training of the EHPI action recognition network (ST-GCN on the EHPI skeleton sequences of SIM-C01).
 
     python pedrec/training/train_ehpi3d.py --variant gt_pred_64frames
 
@@ -32,7 +32,7 @@ from pedrec.datasets.pedrec_temporal_dataset import PedRecTemporalDataset
 from pedrec.datasets.video_action_dataset import VideoActionDataset
 from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.models.experiments.experiment_paths import ExperimentPaths
-from pedrec.networks.net_pedrec.ehpi_3d_net import Ehpi3DNet
+from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.training.experiments.ehpi3d_variants import Ehpi3DVariant, get_variant, format_variant_table, VARIANTS, \
     DEFAULT_VARIANT
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
@@ -61,7 +61,7 @@ def get_train_loader(experiment_paths: ExperimentPaths, batch_size: int, num_wor
                                       pedrec_cfg,
                                       action_list,
                                       ehpi_transform,
-                                      pose_results_file=experiment_paths.sim_c01_results_filename)
+                                      pose_results_file=experiment_paths.sim_c01_lifted_results_filename)
     train_set = sim_train
     if vid_cfg is not None:
         ehpi_vid_dataset = VideoActionDataset(experiment_paths.ehpi_videos_dir,
@@ -127,7 +127,7 @@ def train_variant(variant: Ehpi3DVariant, experiment_paths: ExperimentPaths, dev
     os.makedirs(output_dir, exist_ok=True)
     checkpoint_path = os.path.join(output_dir, f"{variant.experiment_name}.pth")
 
-    net = Ehpi3DNet(len(action_list))
+    net = EhpiStGcn(len(action_list))
     if init_weights is not None:
         logger.info(f"Initializing from {init_weights}")
         net.load_state_dict(load_state_dict_file(init_weights))

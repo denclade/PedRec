@@ -2,7 +2,7 @@
 Extracts the plain PedRecNet weights (``*_net.pth``, used by the demo) from a training checkpoint which contains the
 MTL wrapper (network + loss head).
 
-    python pedrec/tools/networks/mtl_net_extractor.py --stage p2d3d_c_o_h36m_sim_mebow
+    python pedrec/tools/networks/mtl_net_extractor.py --stage p2d3d_c_o
     python pedrec/tools/networks/mtl_net_extractor.py --input some_checkpoint.pth --output some_checkpoint_net.pth
 """
 import sys
@@ -15,7 +15,7 @@ import os
 import torch
 
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
 from pedrec.networks.net_pedrec.pedrec_net_mtl_wrapper import PedRecNetMTLWrapper
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
@@ -32,8 +32,8 @@ def mtl_to_net(mtl_wrapper: torch.nn.Module, mtl_path: str, output_path: str):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stage", default=None,
-                        help="Training stage name; reads <output-dir>/experiment_pedrec_<stage>_<cycle>.pth and "
-                             "writes <data-dir>/models/pedrec/experiment_pedrec_<stage>_<cycle>_net.pth.")
+                        help="Training stage name; reads <output-dir>/experiment_pedrec_v2_<stage>_<cycle>.pth and "
+                             "writes <data-dir>/models/pedrec/experiment_pedrec_v2_<stage>_<cycle>_net.pth.")
     parser.add_argument("--cycle", type=int, default=0)
     parser.add_argument("--input", default=None, help="Explicit MTL checkpoint path.")
     parser.add_argument("--output", default=None, help="Explicit output path.")
@@ -51,10 +51,11 @@ def main(argv=None):
     if args.output is not None:
         output_path = args.output
     elif args.stage is not None:
-        output_path = os.path.join(os.path.dirname(paths.output_dir), f"experiment_pedrec_{args.stage}_{args.cycle}_net.pth")
+        output_path = os.path.join(os.path.dirname(paths.output_dir),
+                                   os.path.basename(mtl_weights).replace(".pth", "_net.pth"))
     else:
         output_path = os.path.splitext(mtl_weights)[0] + "_net.pth"
-    net = PedRecNetMTLWrapper(PedRecNet(PedRecNet50Config()), PedRecNetLossHead(get_device(False)))
+    net = PedRecNetMTLWrapper(PedRecNet(PedRecNetConfig()), PedRecNetLossHead(get_device(False)))
     mtl_to_net(net, mtl_weights, output_path)
 
 

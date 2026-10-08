@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List, Optional
 
 from torch import nn
 
@@ -31,10 +31,12 @@ class ExperimentDescription(object):
     batch_size: int = 48
     batch_size_validate: int = 48
     num_workers: int = 12
+    dataset_sampling_weights: Optional[Dict[str, float]] = None  # e.g. {'coco': 1, 'h36m': 1, 'sim': 2}
 
     use_train_coco: bool = True
     use_train_sim: bool = True
     use_train_h36m: bool = True
+    use_extra_3d: bool = True  # converted additional 3D datasets, if present (pedrec/datasets/extra_3d_datasets.py)
     use_train_tud: bool = False
     coco_train_subsampling: int = 1
     h36m_train_subsampling: int = 10

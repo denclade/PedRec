@@ -9,6 +9,9 @@ class CocoDatasetConfig:
     scale_factor: float
     rotation_factor: int
     use_mebow_orientation: bool
+    half_body_prob: float = 0.3  # training: probability to crop to the upper or lower body
+    random_erasing_prob: float = 0.3  # training: probability to erase a random rectangle (occlusion)
+    color_jitter: float = 0.2  # training: max relative brightness / contrast / saturation change
 
 @dataclass
 class TudDatasetConfig:
@@ -16,6 +19,9 @@ class TudDatasetConfig:
     scale_factor: float
     subsample: int
     subsampling_strategy: SAMPLE_METHOD
+    half_body_prob: float = 0.3  # training: probability to crop to the upper or lower body
+    random_erasing_prob: float = 0.3  # training: probability to erase a random rectangle (occlusion)
+    color_jitter: float = 0.2  # training: max relative brightness / contrast / saturation change
 
 
 @dataclass
@@ -58,6 +64,9 @@ class PedRecDatasetConfig:
     subsample: int
     subsampling_strategy: SAMPLE_METHOD
     gt_result_ratio: float = 1.0
+    half_body_prob: float = 0.3  # training: probability to crop to the upper or lower body
+    random_erasing_prob: float = 0.3  # training: probability to erase a random rectangle (occlusion)
+    color_jitter: float = 0.2  # training: max relative brightness / contrast / saturation change
 
 
 def get_coco_dataset_cfg_default() -> CocoDatasetConfig:

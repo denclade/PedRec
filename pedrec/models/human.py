@@ -18,6 +18,7 @@ class Human:
     ehpi: np.ndarray = None
     actions: List[ACTION] = None
     action_probabilities: np.ndarray = None
+    lifter_features: np.ndarray = None  # per frame input of the temporal 3D lifter (J x 6)
     __score: float = None
 
     @property

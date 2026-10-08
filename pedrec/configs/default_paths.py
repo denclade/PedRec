@@ -23,11 +23,12 @@ def data_path(*parts: str, data_root: str = None) -> str:
     return os.path.join(get_data_root(data_root), *parts)
 
 
-# Pretrained weights (see README, "Pretrained models")
-YOLO_V4_WEIGHTS = os.path.join("models", "yolo_v4", "yolov4.pth")
-PEDREC_NET_WEIGHTS = os.path.join("models", "pedrec", "experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0_net.pth")
-EHPI3D_WEIGHTS = os.path.join("models", "ehpi3d", "ehpi_3d_sim_c01_actionrec_gt_pred_64frames.pth")
-POSE_RESNET_WEIGHTS = os.path.join("models", "human_pose_baseline", "pose_resnet_50_256x192.pth.tar")
+# Weights (see README): PedRecNet v2, the temporal 3D lifter and the ST-GCN action recognition are trained with this
+# code base, the detector (RT-DETRv2) is loaded from the Hugging Face hub / cache.
+PEDREC_NET_WEIGHTS = os.path.join("models", "pedrec", "experiment_pedrec_v2_p2d3d_c_o_0_net.pth")
+LIFTER_WEIGHTS = os.path.join("models", "pedrec", "pedrec_v2_lifter.pth")
+EHPI3D_WEIGHTS = os.path.join("models", "ehpi3d", "ehpi_stgcn_sim_c01_actionrec_gt_pred_64frames.pth")
+RTDETR_MODEL = "PekingU/rtdetr_v2_r18vd"
 
 # Demo data
 DEMO_VIDEO = os.path.join("demo", "multi_person_crossing_street.mp4")
@@ -37,12 +38,12 @@ PEDREC_CHECKPOINT_DIR = os.path.join("models", "pedrec", "single_results")
 EHPI3D_CHECKPOINT_DIR = os.path.join("models", "ehpi3d")
 
 
-def yolo_v4_weights(data_root: str = None) -> str:
-    return data_path(YOLO_V4_WEIGHTS, data_root=data_root)
-
-
 def pedrec_net_weights(data_root: str = None) -> str:
     return data_path(PEDREC_NET_WEIGHTS, data_root=data_root)
+
+
+def lifter_weights(data_root: str = None) -> str:
+    return data_path(LIFTER_WEIGHTS, data_root=data_root)
 
 
 def ehpi3d_weights(data_root: str = None) -> str:

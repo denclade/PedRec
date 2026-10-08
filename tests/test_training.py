@@ -7,7 +7,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.models.experiments.experiment_paths import ExperimentPaths
 from pedrec.models.experiments.validation_set_model import ValidationSet
 from pedrec.training import train_pedrec
@@ -75,7 +75,7 @@ def test_relative_score_orientation():
 def test_stage_rounds_ema_best_and_resume(tmp_path, monkeypatch):
     torch.manual_seed(0)
     device = torch.device("cpu")
-    stage = get_stage("p2d3d_c_o_h36m_sim_mebow")
+    stage = get_stage("p2d3d_c_o")
     paths = get_experiment_paths(str(tmp_path))
     paths.output_dir = str(tmp_path)
     description = train_pedrec.get_experiment_description(stage, paths, batch_size=2, num_workers=0)
@@ -87,7 +87,7 @@ def test_stage_rounds_ema_best_and_resume(tmp_path, monkeypatch):
     monkeypatch.setattr(train_pedrec, "get_validation_sets", lambda *a, **k: val_sets)
 
     # predecessor checkpoint
-    predecessor = train_pedrec.PedRecNetMTLWrapper(train_pedrec.PedRecNet(PedRecNet50Config()),
+    predecessor = train_pedrec.PedRecNetMTLWrapper(train_pedrec.PedRecNet(PedRecNetConfig()),
                                                    train_pedrec.PedRecNetLossHead(device))
     torch.save(predecessor.state_dict(), paths.get_stage_checkpoint_path(stage.init_from))
     options = TrainingOptions(amp="auto", ema_decay=0.9, grad_clip=5.0)
@@ -132,7 +132,7 @@ def test_stage_rounds_ema_best_and_resume(tmp_path, monkeypatch):
     train_pedrec.train_stage(stage, description, net, device, cycle_num=0, epochs_round_1=1, epochs_round_2=2,
                              options=options, resume=True)
     assert len(trained_epochs) == 3  # only the missing epoch was trained
-    state = torch.load(os.path.join(tmp_path, f"{stage.experiment_name}_0_state.pth"), weights_only=False)
+    state = torch.load(f"{paths.get_stage_file_base(stage.name)}_0_state.pth", weights_only=False)
     assert state["round"] == 1 and state["epoch"] == 1
     with pytest.raises(ValueError):  # changed schedule
         description = train_pedrec.get_experiment_description(stage, paths, batch_size=2, num_workers=0)
@@ -146,10 +146,23 @@ def test_ehpi3d_training_on_legacy_data(tmp_path, data_dir):
     paths = get_experiment_paths(str(tmp_path))
     paths.sim_c01_dir = data_dir
     paths.sim_c01_filename = "legacy_pedrec_gt_df.pkl"
-    paths.sim_c01_results_filename = "legacy_pedrec_result_df.pkl"
+    paths.sim_c01_lifted_results_filename = "legacy_pedrec_result_df.pkl"
     paths.ehpi3d_output_dir = str(tmp_path)
     checkpoint = train_ehpi3d.train_variant(get_variant("gt_pred_64frames"), paths, torch.device("cpu"), epochs=1,
                                             batch_size=8, num_workers=0, lr=1e-3,
                                             options=TrainingOptions(ema_decay=0.99))
     state = torch.load(checkpoint, weights_only=True)
     assert all(torch.isfinite(v).all() for v in state.values() if v.is_floating_point())
+
+
+def test_stage_chain_and_missing_predecessor(tmp_path):
+    from pedrec.training.experiments.pedrec_stages import get_stage_chain, IMAGENET_INIT
+    assert [stage.name for stage in get_stage_chain("p2d3d_c_o")] == ["p2d_c", "p2d3d_c_o"]
+    assert get_stage("p2d_c").init_from == IMAGENET_INIT
+    stage = get_stage("p2d3d_c_o")
+    paths = get_experiment_paths(str(tmp_path))
+    paths.output_dir = str(tmp_path)
+    description = train_pedrec.get_experiment_description(stage, paths, batch_size=2, num_workers=0)
+    assert description.coco_train_dataset_cfg.half_body_prob > 0 and description.coco_train_dataset_cfg.use_mebow_orientation
+    with pytest.raises(FileNotFoundError):
+        train_pedrec.build_net(stage, description, torch.device("cpu"))

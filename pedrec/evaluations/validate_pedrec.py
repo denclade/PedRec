@@ -2,7 +2,7 @@
 Validates a PedRecNet checkpoint on the COCO / SIM / Human3.6m validation sets (2D / 3D pose, joint confidence,
 orientation) using the same validation code as the training loop.
 
-    python pedrec/evaluations/validate_pedrec.py --weights data/models/pedrec/single_results/experiment_pedrec_p2d3d_c_o_h36m_sim_mebow_0.pth
+    python pedrec/evaluations/validate_pedrec.py --weights data/models/pedrec/single_results/experiment_pedrec_v2_p2d3d_c_o_0.pth
 
 Accepts both the training checkpoints (MTL wrapper incl. loss head) and the exported ``*_net.pth`` files.
 """
@@ -16,9 +16,10 @@ import argparse
 import torch
 import torchvision.transforms as transforms
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs import default_paths
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.evaluations.validate import print_results
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
@@ -39,12 +40,11 @@ def get_preds_mtl(outputs):
 
 
 def load_net(weights_path: str, device: torch.device) -> PedRecNetMTLWrapper:
-    net = PedRecNetMTLWrapper(PedRecNet(PedRecNet50Config()), PedRecNetLossHead(device))
+    """Training checkpoint (MTL wrapper) or exported *_net.pth."""
+    net = PedRecNetMTLWrapper(load_pedrec_net(weights_path, device), PedRecNetLossHead(device))
     state_dict = load_state_dict_file(weights_path)
     if any(key.startswith("loss_head.") for key in state_dict.keys()):
         net.load_state_dict(state_dict)
-    else:  # exported network weights without the MTL wrapper
-        net.model.load_state_dict(state_dict)
     net.to(device)
     return net
 
@@ -73,7 +73,7 @@ def main(argv=None):
         experiment_name="validate_pedrec",
         initialization_notes=f"Loaded from {weights}",
         experiment_paths=experiment_paths,
-        net_cfg=PedRecNet50Config(),
+        net_cfg=PedRecNetConfig(),
         use_val_coco=not args.no_coco,
         use_val_sim=not args.no_sim,
         use_val_h36m=not args.no_h36m,

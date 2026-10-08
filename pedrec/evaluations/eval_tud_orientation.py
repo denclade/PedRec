@@ -17,15 +17,15 @@ import torch
 from sklearn.metrics import average_precision_score, recall_score
 from torchvision import transforms
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.configs import default_paths
 from pedrec.configs.app_config import AppConfig
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 from pedrec.utils.augmentation_helper import get_affine_transforms
 from pedrec.utils.bb_helper import get_center_bb_from_coord_bb, \
     bb_to_center_scale
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
-from pedrec.utils.demo_helper import init_pose_model
 from pedrec.utils.torch_utils.torch_helper import get_device
 
 pose_transform = transforms.Compose([
@@ -124,13 +124,13 @@ def main(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
 
     train_data = get_xml_data(os.path.join(experiment_paths.tud_dir, "viewpoints_test.al"))
-    cfg = PedRecNet50Config()
+    cfg = PedRecNetConfig()
     app_cfg = AppConfig()
     device = get_device(not args.cpu)
 
     # Pose
-    pose_cfg = PedRecNet50Config()
-    net = init_pose_model(PedRecNet(cfg), pedrecnet_weights, logger, device)
+    pose_cfg = PedRecNetConfig()
+    net = load_pedrec_net(pedrecnet_weights, device)
     corrects = 0
     distances = []
     bin_gt = {}

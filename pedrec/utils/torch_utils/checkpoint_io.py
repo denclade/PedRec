@@ -1,7 +1,7 @@
 """
 Checkpoint loading compatible with current PyTorch versions.
 
-Since PyTorch 2.6 ``torch.load`` defaults to ``weights_only=True``. All PedRec checkpoints (YoloV4, PedRecNet, EHPI3D,
+Since PyTorch 2.6 ``torch.load`` defaults to ``weights_only=True``. All PedRec checkpoints (PedRecNet v1 / v2, ST-GCN,
 the MTL training checkpoints and the pose-resnet ``.pth.tar``) are plain state dicts and load fine in this mode.
 Older ``.pth.tar`` files which wrap the state dict in ``{"state_dict": ...}`` are unwrapped automatically.
 """

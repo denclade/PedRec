@@ -3,7 +3,7 @@ import numpy as np
 from pedrec.models.constants.skeleton_coco import SKELETON_COCO_JOINTS
 from pedrec.models.constants.skeleton_h36m import SKELETON_H36M_JOINTS, SKELETON_H36M_HANDFOOTENDS_JOINTS
 from pedrec.models.data_structures import ImageSize
-from pedrec.utils.augmentation_helper import get_affine_transform, affine_transform_pt
+from pedrec.utils.augmentation_helper import get_affine_transform, affine_transform_pt, get_normalization_size
 
 
 def get_total_coords(coords_orig: np.ndarray, model_input_size: ImageSize, centers, scales, rotations):
@@ -18,8 +18,7 @@ def get_total_coords(coords_orig: np.ndarray, model_input_size: ImageSize, cente
     :return:
     """
     coords = coords_orig.copy()
-    coords[:, :, 0] *= model_input_size.width
-    coords[:, :, 1] *= model_input_size.height
+    coords[:, :, :2] *= get_normalization_size(model_input_size)
     for i in range(coords.shape[0]):
         trans = get_affine_transform(centers[i], scales[i], rotations[i], model_input_size, inv=1)
         for p in range(coords[i].shape[0]):

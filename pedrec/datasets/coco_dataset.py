@@ -10,12 +10,13 @@ from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
 from pedrec.configs.dataset_configs import CocoDatasetConfig, get_coco_dataset_cfg_default
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
+from pedrec.datasets.augmentations import half_body_center_scale, color_jitter, random_erasing
 from pedrec.datasets.dataset_helper import get_skeleton_2d_affine_transform
 from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 from pedrec.models.data_structures import ImageSize
-from pedrec.utils.augmentation_helper import get_affine_transforms, get_affine_transform
+from pedrec.utils.augmentation_helper import get_affine_transforms, get_normalization_size
 from pedrec.utils.bb_helper import get_center_bb_from_tl_bb, bb_to_center_scale
 from pedrec.utils.skeleton_helper import flip_lr_joints
 from pedrec.utils.skeleton_helper_3d import flip_lr_orientation
@@ -209,6 +210,10 @@ class CocoDataset(Dataset):
             orientation = flip_lr_orientation(orientation)
 
         if self.mode == DatasetType.TRAIN:
+            if random() < self.cfg.half_body_prob:
+                half_body = half_body_center_scale(skeleton, self.input_size)
+                if half_body is not None:
+                    center, scale = half_body
             scale = scale * np.clip(np.random.randn() * self.cfg.scale_factor + 1,
                                     1 - self.cfg.scale_factor,
                                     1 + self.cfg.scale_factor)
@@ -243,11 +248,14 @@ class CocoDataset(Dataset):
         # if np.max(skeleton[:, 2]) == 0:  # still screwed
         # print(f"No visible skeleton COCO: {index} - {annotations['img_filename']}")
 
-        skeleton[:, 0] /= model_input.shape[1]
-        skeleton[:, 1] /= model_input.shape[0]
+        if self.mode == DatasetType.TRAIN:
+            model_input = color_jitter(model_input, self.cfg.color_jitter)
+        skeleton[:, :2] /= get_normalization_size(self.input_size)
 
         if self.transform:
             model_input = self.transform(model_input)
+            if self.mode == DatasetType.TRAIN:
+                model_input = random_erasing(model_input, self.cfg.random_erasing_prob)
 
         if np.max(skeleton) > 1:
             raise ValueError("WTF")
@@ -273,7 +281,7 @@ class CocoDataset(Dataset):
         }
 
 if __name__ == "__main__":
-    cfg = PedRecNet50Config()
+    cfg = PedRecNetConfig()
     dataset_cfg = get_coco_dataset_cfg_default()
 
     # MS Coco

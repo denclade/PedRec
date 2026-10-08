@@ -6,6 +6,7 @@ import argparse
 import os
 from pathlib import Path
 
+from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 from pedrec.training.experiments.experiment_initializer import initialize_weights_with_same_name_and_shape
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
@@ -25,7 +26,7 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-from pedrec.configs.pedrec_net_config import PedRecNet50Config
+from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.training.experiments.experiment_train_helper import init_experiment, \
     get_outputs_loss_mtl
 from pedrec.utils.torch_utils.torch_helper import get_device, move_to_device
@@ -107,7 +108,7 @@ def get_preds_mtl(outputs: torch.Tensor):
 
 def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir, pedrec_dataset_filename, weights_path: str, flip_all: bool = False):
     # experiment_paths = get_experiment_paths_home()
-    net_cfg = PedRecNet50Config()
+    net_cfg = PedRecNetConfig()
     # sim_val_dataset_cfg: PedRecDatasetConfig = get_sim_val_dataset_cfg_default()
     # sim_val_dataset_cfg.subsample = 1
     init_experiment(42)
@@ -116,10 +117,7 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
     ####################################################################################################################
     ############################################ Initialize Network ####################################################
     ####################################################################################################################
-    net = PedRecNet(net_cfg)
-    net.init_weights()
-    initialize_weights_with_same_name_and_shape(net, weights_path, "model.")
-    net.to(device)
+    net = load_pedrec_net(weights_path, device)  # MTL checkpoint or *_net.pth
 
     ####################################################################################################################
     ################################################# Datasets #########################################################
@@ -210,7 +208,7 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
     df.to_pickle(output_path.replace("pred", "gt"))
     print("saved gt")
 
-DEFAULT_EXPERIMENTS = ["p2d3d_c_o_h36m_sim_mebow"]
+DEFAULT_EXPERIMENTS = ["p2d3d_c_o"]
 
 
 def parse_args(argv=None):

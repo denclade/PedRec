@@ -8,14 +8,12 @@ All functions work on CPU and CUDA tensors. They reproduce the original operatio
                                normalized exactly as before)
 * ``resize_bilinear``       == ``cv2.resize(img, size)`` (INTER_LINEAR, half pixel centers, no antialiasing)
 * ``transform_coords_2d``   == ``affine_transform_coords_2d`` for all persons at once
-* ``yolo_postprocess``      == ``yolo_v4_helper.post_processing`` with a GPU NMS
 """
-from typing import List, Optional, Sequence, Tuple
+from typing import Sequence, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchvision
 
 from pedrec.models.data_structures import ImageSize
 from pedrec.utils.augmentation_helper import get_affine_transforms
@@ -101,32 +99,3 @@ def transform_coords_2d(coords: torch.Tensor, trans_invs: torch.Tensor) -> torch
     """Applies per person 2x3 affine transforms to Bx J x 2 coordinates."""
     ones = torch.ones_like(coords[..., :1])
     return torch.matmul(torch.cat((coords, ones), dim=-1), trans_invs.transpose(1, 2))
-
-
-def yolo_postprocess(output: torch.Tensor, img_size: ImageSize, conf_thresh: float, nms_thresh: float,
-                     tracked_bbs: Optional[np.ndarray] = None) -> List[List[float]]:
-    """
-    Post-processing of the YoloV4 output (1 x N x (4 + num_classes)) for a single image, on the device.
-
-    :param tracked_bbs: optional Kx6 array with bbs of tracked humans (center x, center y, w, h, score, class idx) in
-        image coordinates, added as candidates before the NMS (as in the original implementation)
-    :return: list of bbs (center x, center y, width, height, confidence, class idx) in image coordinates
-    """
-    boxes = output[0, :, :4].float()
-    max_conf, max_id = output[0, :, 4:].float().max(dim=1)
-    if tracked_bbs is not None and len(tracked_bbs) > 0:
-        tracked = torch.as_tensor(np.asarray(tracked_bbs, dtype=np.float32), device=boxes.device)
-        norm = torch.tensor([img_size.width, img_size.height, img_size.width, img_size.height], device=boxes.device)
-        boxes = torch.cat((boxes, tracked[:, :4] / norm), dim=0)
-        max_conf = torch.cat((max_conf, tracked[:, 4]), dim=0)
-        max_id = torch.cat((max_id, tracked[:, 5].long()), dim=0)
-    keep = max_conf > conf_thresh
-    boxes, max_conf, max_id = boxes[keep], max_conf[keep], max_id[keep]
-    if boxes.shape[0] == 0:
-        return []
-    # class agnostic NMS (as before) on corner coordinates
-    xyxy = torch.cat((boxes[:, :2] - boxes[:, 2:] / 2, boxes[:, :2] + boxes[:, 2:] / 2), dim=1)
-    keep_idx = torchvision.ops.nms(xyxy, max_conf, nms_thresh)
-    scale = torch.tensor([img_size.width, img_size.height, img_size.width, img_size.height], device=boxes.device)
-    result = torch.cat((boxes[keep_idx] * scale, max_conf[keep_idx, None], max_id[keep_idx, None].float()), dim=1)
-    return result.cpu().tolist()

@@ -148,8 +148,7 @@ def get_results(experiment_name: str, flip_test: bool = False):
     return list(cocoEval.stats), pck_results, o_body_results
 
 
-DEFAULT_EXPERIMENTS = ["p2d_c", "p2d3d_c_h36m", "p2d3d_c_sim", "p2d3d_c_h36m_sim", "p2d3d_c_o_h36m_mebow", "p2d3d_c_o_sim",
-                       "p2d3d_c_o_h36m_sim", "p2d3d_c_o_h36m_sim_mebow"]
+DEFAULT_EXPERIMENTS = ["p2d_c", "p2d3d_c_o"]
 
 
 def parse_args(argv=None):
