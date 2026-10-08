@@ -56,11 +56,7 @@ def _check_outputs(image_df: str, seq_df: str, expected_images: int):
     return df
 
 
-def test_mpi_inf_3dhp(tmp_path):
-    scipy_io = pytest.importorskip("scipy.io")
-    h5py = pytest.importorskip("h5py")
-    from pedrec.tools.datasets.convert_mpi_inf_3dhp import convert_train, convert_test
-    root = tmp_path / "3dhp"
+def _make_3dhp_train(root, scipy_io):
     seq_dir = root / "S1" / "Seq1"
     joints = _person(FRAMES, 28)
     annot2 = np.empty((14, 1), dtype=object)
@@ -71,6 +67,32 @@ def test_mpi_inf_3dhp(tmp_path):
     os.makedirs(seq_dir)
     scipy_io.savemat(str(seq_dir / "annot.mat"), {"annot2": annot2, "annot3": annot3})
     _video(str(seq_dir / "imageSequence" / "video_0.avi"), FRAMES, fourcc="MJPG")
+
+
+def test_mpi_inf_3dhp_downscaled_parallel(tmp_path):
+    scipy_io = pytest.importorskip("scipy.io")
+    from pedrec.tools.datasets.convert_mpi_inf_3dhp import convert_train
+    root = tmp_path / "3dhp"
+    _make_3dhp_train(root, scipy_io)
+    convert_train(str(root), str(root), image_step=5, subjects=[1, 2], cameras=[0], max_image_size=0, workers=0)
+    full = read_pedrec_df(str(root / "mpi_inf_3dhp_train_pedrec.pkl"))
+    # images of the first run (original size) are replaced, joints scaled accordingly
+    convert_train(str(root), str(root), image_step=5, subjects=[1, 2], cameras=[0], max_image_size=160, workers=2)
+    half = read_pedrec_df(str(root / "mpi_inf_3dhp_train_pedrec.pkl"))
+    image = cv2.imread(str(root / "images" / "S1_Seq1_cam0" / "img_00001.jpg"))
+    assert image.shape[:2] == (120, 160)
+    for column in ("skeleton2d_left_shoulder_x", "skeleton2d_left_shoulder_y", "bb_center_x", "bb_width"):
+        assert np.allclose(half[column], full[column] * 0.5, atol=1e-3), column
+    assert list(half.columns) == list(full.columns) and len(half) == len(full) == 3
+    _check_outputs(str(root / "mpi_inf_3dhp_train_pedrec.pkl"), str(root / "mpi_inf_3dhp_train_seq.pkl"), 3)
+
+
+def test_mpi_inf_3dhp(tmp_path):
+    scipy_io = pytest.importorskip("scipy.io")
+    h5py = pytest.importorskip("h5py")
+    from pedrec.tools.datasets.convert_mpi_inf_3dhp import convert_train, convert_test
+    root = tmp_path / "3dhp"
+    _make_3dhp_train(root, scipy_io)
     convert_train(str(root), str(root), image_step=5, subjects=[1], cameras=[0])
     _check_outputs(str(root / "mpi_inf_3dhp_train_pedrec.pkl"), str(root / "mpi_inf_3dhp_train_seq.pkl"), 3)
 

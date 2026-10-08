@@ -230,9 +230,9 @@ def get_coco(datasets: str, parts: List[str], keep_archives: bool):
         log(INFO["mebow"])
 
 
-def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92):
+def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92, workers: Optional[int] = None):
     """Extracts the frames referenced by the H36M dataframes from the (registered) Human3.6m videos."""
-    from pedrec.tools.datasets.pedrec_df_writer import extract_frames
+    from pedrec.tools.datasets.pedrec_df_writer import FrameExtractor
     from pedrec.utils.pandas_helper import read_pedrec_df
     for split in splits:
         base = os.path.join(datasets, "Human3.6m", split)
@@ -241,19 +241,18 @@ def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92):
             raise FileNotFoundError(f"{df_path} missing, run mise run download:datasets:pedrec first")
         df = read_pedrec_df(df_path)
         groups = df.groupby(df["img_dir"].astype(str), observed=True)["img_id"]
-        for i, (img_dir, ids) in enumerate(groups):
-            subject, _, name = img_dir.replace("\\", "/").split("/")
-            video = os.path.join(base, subject, "Videos", f"{name}.mp4")
-            if not os.path.isfile(video):
-                log(f"missing video {video}")
-                continue
-            frames = ids.to_numpy().astype(int) - 1
-            written = extract_frames(video, os.path.join(base, img_dir), frames, quality)
-            if len(written) != len(set(frames)):
-                log(f"  {img_dir}: only {len(written)} of {len(set(frames))} frames in the video")
-            if (i + 1) % 20 == 0:
-                log(f"{split}: {i + 1}/{groups.ngroups} videos")
+        with FrameExtractor(workers, total=groups.ngroups, desc=f"Human3.6m {split}") as extractor:
+            for img_dir, ids in groups:
+                subject, _, name = img_dir.replace("\\", "/").split("/")
+                video = os.path.join(base, subject, "Videos", f"{name}.mp4")
+                frames = ids.to_numpy().astype(int) - 1
 
+                def check(written, img_dir=img_dir, video=video, expected=len(set(frames))):
+                    if written is None:
+                        extractor.progress.write(f"missing video {video}")
+                    elif len(written) != expected:
+                        extractor.progress.write(f"  {img_dir}: only {len(written)} of {expected} frames in the video")
+                extractor.submit(video, os.path.join(base, img_dir), frames, check, quality=quality)
 
 def get_3dhp(datasets: str, accept_license: bool, subjects: List[int], cameras: List[int], keep_archives: bool):
     if not accept_license:
@@ -329,6 +328,7 @@ def main(argv=None):
     p.add_argument("--parts", nargs="*", default=["annotations", "val", "train"], choices=["annotations", "val", "train"])
     p = sub.add_parser("h36m-images", help="Extract the frames of the H36M dataframes from the registered videos")
     p.add_argument("--splits", nargs="*", default=["train", "val"], choices=["train", "val"])
+    p.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
     p = sub.add_parser("3dhp", help="MPI-INF-3DHP via the official download scripts")
     p.add_argument("--accept-license", action="store_true")
     p.add_argument("--subjects", nargs="*", type=int, default=list(range(1, 9)))
@@ -352,7 +352,7 @@ def main(argv=None):
     elif args.command == "coco":
         get_coco(datasets, args.parts, args.keep_archives)
     elif args.command == "h36m-images":
-        extract_h36m_images(datasets, args.splits)
+        extract_h36m_images(datasets, args.splits, workers=args.workers)
     elif args.command == "3dhp":
         get_3dhp(datasets, args.accept_license, args.subjects, args.cameras, args.keep_archives)
     elif args.command == "aistpp":

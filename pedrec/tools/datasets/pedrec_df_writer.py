@@ -120,11 +120,12 @@ class Sequence:
 class PedRecDfWriter:
     def __init__(self, dataset_type: int = 0):
         self.dataset_type = dataset_type
-        self.rows_images: List[list] = []
-        self.rows_sequences: List[list] = []
+        self.chunks_images: List[pd.DataFrame] = []
+        self.chunks_sequences: List[pd.DataFrame] = []
         self.scene_id = 0
 
-    def _rows(self, seq: Sequence, frames: np.ndarray, img_dir: str, img_ids: np.ndarray) -> List[list]:
+    def _frames_df(self, seq: Sequence, frames: np.ndarray, img_dir: str, img_ids: np.ndarray) -> pd.DataFrame:
+        """One block of rows (numpy column blocks instead of per row lists: ~1 KB per frame)."""
         n = len(frames)
         supported = seq.supported.astype(np.float32)
         joints_2d = seq.joints_2d[frames]
@@ -145,14 +146,22 @@ class PedRecDfWriter:
         skeleton_3d[..., 4] = supported
         skeleton_3d[..., 5] = supported
         bbs = bbs_from_joints(joints_2d, seq.supported, seq.img_width, seq.img_height)
-        rows = []
-        for i in range(n):
-            meta = [seq.dataset, self.dataset_type, self.scene_id, 0, 0, int(i + 1), int(i), img_dir,
-                    int(img_ids[i]), "jpg", seq.subject_id, -1, -1, -1, -1, -1, -1, -1, True, -1]
-            orientations = [0.0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0]  # not provided (not supported)
-            rows.append(meta + bbs[i].tolist() + hip[i].tolist() + orientations +
-                        skeleton_2d[i].reshape(-1).tolist() + skeleton_3d[i].reshape(-1).tolist())
-        return rows
+        orientations = np.zeros((n, 8), dtype=np.float32)  # not provided (not supported)
+        numeric = np.concatenate([bbs, hip.astype(np.float32), orientations, skeleton_2d.reshape(n, -1),
+                                  skeleton_3d.reshape(n, -1)], axis=1)
+        columns = get_column_names()
+        meta = {"dataset": [seq.dataset] * n, "dataset_type": np.full(n, self.dataset_type),
+                "scene_id": np.full(n, self.scene_id), "scene_start": np.zeros(n, dtype=int),
+                "scene_end": np.zeros(n, dtype=int), "frame_nr_global": np.arange(1, n + 1),
+                "frame_nr_local": np.arange(n), "img_dir": [img_dir] * n, "img_id": np.asarray(img_ids, dtype=int),
+                "img_type": ["jpg"] * n, "subject_id": [seq.subject_id] * n}
+        for column in ("gender", "skin_color", "size", "bmi", "age", "movement", "movement_speed", "actions"):
+            meta[column] = np.full(n, -1)
+        meta["is_real_img"] = np.ones(n, dtype=bool)
+        numeric_columns = columns[columns.index("bb_center_x"):]
+        assert len(numeric_columns) == numeric.shape[1] and len(meta) + len(numeric_columns) == len(columns)
+        df = pd.concat([pd.DataFrame(meta), pd.DataFrame(numeric, columns=numeric_columns)], axis=1)
+        return df[columns]
 
     def add(self, seq: Sequence, image_frames: Optional[np.ndarray] = None, sequence_fps: float = 30.0):
         """
@@ -163,19 +172,18 @@ class PedRecDfWriter:
         if image_frames is not None:
             frames = np.array([f for f in image_frames if valid[f]], dtype=int)
             if len(frames):
-                self.rows_images += self._rows(seq, frames, os.path.join("images", seq.name), frames + 1)
+                self.chunks_images.append(self._frames_df(seq, frames, os.path.join("images", seq.name), frames + 1))
         step = max(1, int(round(seq.fps / sequence_fps)))
-        frames = np.flatnonzero(valid)[::1]
+        frames = np.flatnonzero(valid)
         frames = frames[frames % step == 0]
         if len(frames):
-            self.rows_sequences += self._rows(seq, frames, os.path.join("images", seq.name), frames + 1)
+            self.chunks_sequences.append(self._frames_df(seq, frames, os.path.join("images", seq.name), frames + 1))
         self.scene_id += 1
 
     @staticmethod
-    def _to_df(rows: List[list]) -> pd.DataFrame:
-        df = pd.DataFrame(data=rows, columns=get_column_names())
-        df = df.astype({c: "float32" for c in df.columns if c.startswith(("skeleton", "bb_center", "bb_width",
-                                                                          "bb_height", "bb_score", "env_position",
+    def _to_df(chunks: List[pd.DataFrame]) -> pd.DataFrame:
+        df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=get_column_names())
+        df = df.astype({c: "float32" for c in df.columns if c.startswith(("skeleton", "bb_", "env_position",
                                                                           "body_orientation", "head_orientation"))})
         # scene start / end (row indices of each scene, used by the temporal datasets)
         df["scene_start"] = df.groupby("scene_id").cumcount().pipe(lambda c: df.index - c)
@@ -185,17 +193,46 @@ class PedRecDfWriter:
         return df
 
     def save(self, image_path: Optional[str], sequence_path: Optional[str]):
-        for rows, path in ((self.rows_images, image_path), (self.rows_sequences, sequence_path)):
+        for chunks, path in ((self.chunks_images, image_path), (self.chunks_sequences, sequence_path)):
             if path is None:
                 continue
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-            self._to_df(rows).to_pickle(path)
-            print(f"Wrote {len(rows)} frames to {path}")
+            df = self._to_df(chunks)
+            df.to_pickle(path)
+            print(f"Wrote {len(df)} frames to {path}")
 
 
-def extract_frames(video_path: str, output_dir: str, frames: np.ndarray, quality: int = 92) -> np.ndarray:
-    """Writes the given frames of a video as output_dir/img_<frame + 1>.jpg; returns the frames that exist."""
+SCALE_MARKER = ".pedrec_scale"
+
+
+def image_scale(width: int, height: int, max_size: Optional[int]) -> float:
+    """Scale factor so that the longer image side is at most max_size (None / 0: original size)."""
+    return min(1.0, max_size / max(width, height)) if max_size else 1.0
+
+
+def _check_scale(output_dir: str, scale: float):
+    """Removes images extracted with another scale (marker file only for scaled images, original size = no marker)."""
+    marker = os.path.join(output_dir, SCALE_MARKER)
+    stored = float(open(marker).read()) if os.path.isfile(marker) else 1.0
+    if abs(stored - scale) > 1e-6 or (scale != 1.0 and not os.path.isfile(marker)):
+        for name in os.listdir(output_dir):
+            if name.startswith("img_") and name.endswith(".jpg"):
+                os.remove(os.path.join(output_dir, name))
+    if scale != 1.0:
+        with open(marker, "w") as f:
+            f.write(f"{scale:.8f}")
+    elif os.path.isfile(marker):
+        os.remove(marker)
+
+
+def extract_frames(video_path: str, output_dir: str, frames: np.ndarray, quality: int = 92,
+                   scale: float = 1.0) -> np.ndarray:
+    """
+    Writes the given frames of a video as output_dir/img_<frame + 1>.jpg (resized by scale); returns the frames that
+    exist. Existing images are kept (resumable), images of another scale are replaced.
+    """
     os.makedirs(output_dir, exist_ok=True)
+    _check_scale(output_dir, scale)
     wanted = set(int(f) for f in frames)
     missing = {f for f in wanted if not os.path.isfile(os.path.join(output_dir, f"img_{f + 1:05d}.jpg"))}
     if missing:
@@ -208,9 +245,78 @@ def extract_frames(video_path: str, output_dir: str, frames: np.ndarray, quality
             if index in missing:
                 ok, frame = cap.retrieve()
                 if ok:
-                    cv2.imwrite(os.path.join(output_dir, f"img_{index + 1:05d}.jpg"), frame,
-                                [cv2.IMWRITE_JPEG_QUALITY, quality])
+                    if scale != 1.0:
+                        frame = cv2.resize(frame, (int(round(frame.shape[1] * scale)),
+                                                   int(round(frame.shape[0] * scale))), interpolation=cv2.INTER_AREA)
+                    path = os.path.join(output_dir, f"img_{index + 1:05d}.jpg")
+                    cv2.imwrite(path + ".tmp.jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                    os.replace(path + ".tmp.jpg", path)  # no truncated images after an interruption
             index += 1
         cap.release()
     return np.array(sorted(f for f in wanted if os.path.isfile(os.path.join(output_dir, f"img_{f + 1:05d}.jpg"))),
                     dtype=int)
+
+
+def _init_worker():
+    cv2.setNumThreads(1)
+
+
+class FrameExtractor:
+    """
+    Extracts the frames of many videos in worker processes (video decoding is the slow part of the conversion) and
+    shows the progress. ``submit`` returns immediately; the callbacks get the extracted frame indices (None without a
+    video) and run in the main process in submission order, so the dataframes are deterministic. At most
+    ``2 * workers`` videos are pending (bounded memory).
+    """
+
+    def __init__(self, workers: Optional[int] = None, total: Optional[int] = None, desc: str = "videos"):
+        from tqdm import tqdm
+        self.workers = min(8, os.cpu_count() or 1) if workers is None else workers
+        self.pool = None
+        if self.workers > 0:
+            from concurrent.futures import ProcessPoolExecutor
+            self.pool = ProcessPoolExecutor(self.workers, initializer=_init_worker)
+        self.pending = []
+        self.images = 0
+        self.progress = tqdm(total=total, desc=desc, unit="video", dynamic_ncols=True)
+
+    def submit(self, video: Optional[str], output_dir: str, frames: np.ndarray,
+               callback: Callable[[Optional[np.ndarray]], None], scale: float = 1.0, quality: int = 92):
+        if video is None or not os.path.isfile(video):
+            self.pending.append((None, callback))
+        elif self.pool is None:
+            self.pending.append((extract_frames(video, output_dir, frames, quality, scale), callback))
+        else:
+            self.pending.append((self.pool.submit(extract_frames, video, output_dir, frames, quality, scale), callback))
+        self._drain(max_pending=2 * max(self.workers, 1))
+
+    def _drain(self, max_pending: int):
+        while self.pending:
+            future, callback = self.pending[0]
+            is_future = hasattr(future, "result")
+            if is_future and not future.done() and len(self.pending) <= max_pending:
+                break
+            self.pending.pop(0)
+            result = future.result() if is_future else future
+            callback(result)
+            if result is not None:
+                self.images += len(result)
+            self.progress.set_postfix(images=self.images)
+            self.progress.update(1)
+
+    def close(self):
+        self._drain(max_pending=0)
+        self.progress.close()
+        if self.pool is not None:
+            self.pool.shutdown()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, *args):
+        if exc_type is None:
+            self.close()
+        else:
+            self.progress.close()
+            if self.pool is not None:
+                self.pool.shutdown(cancel_futures=True)

@@ -21,6 +21,7 @@ import zlib
 from typing import Dict, List, Optional
 
 import numpy as np
+from tqdm import tqdm
 
 from pedrec.configs.default_paths import get_data_root
 from pedrec.tools.datasets.pedrec_df_writer import J, PedRecDfWriter, Sequence, to_pedrec_joints
@@ -123,7 +124,7 @@ def convert(root: str, output_dir: str, body_models: str, datasets: Optional[Lis
     if datasets:
         files = [f for f in files if os.path.relpath(f, root).split(os.sep)[0] in datasets]
     writers = {"train": PedRecDfWriter(0), "val": PedRecDfWriter(1)}
-    for i, path in enumerate(files):
+    for path in tqdm(files, desc="AMASS", unit="seq", dynamic_ncols=True):
         data = np.load(path)
         if "poses" not in data or len(data["poses"]) < 10:
             continue
@@ -144,8 +145,6 @@ def convert(root: str, output_dir: str, body_models: str, datasets: Optional[Lis
         split = "val" if zlib.crc32(name.encode()) % val_every == 0 else "train"
         writers[split].add(Sequence("AMASS", name, dataset, p2d, p3d, supported, IMG_WIDTH, IMG_HEIGHT,
                                     source_fps / step), image_frames=None, sequence_fps=fps)
-        if (i + 1) % 100 == 0:
-            print(f"{i + 1}/{len(files)} sequences")
     for split, writer in writers.items():
         writer.save(None, os.path.join(output_dir, f"amass_{split}_seq.pkl"))
 
