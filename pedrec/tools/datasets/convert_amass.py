@@ -2,8 +2,9 @@
 AMASS (Mahmood et al., ICCV 2019; https://amass.is.tue.mpg.de) -> PedRec sequence dataframes for the temporal 3D
 lifter (motion capture only, no images).
 
-AMASS unifies many mocap datasets as SMPL-H parameters, among them ``MPI_Limits`` (PosePrior, Akhter & Black 2015:
-the joint limits / range of motion of the human body) and large everyday motion collections (CMU, BMLmovi, KIT, ...).
+AMASS unifies many mocap datasets as SMPL-H parameters, among them ``PosePrior`` (formerly ``MPI_Limits``, Akhter &
+Black 2015: the joint limits / range of motion of the human body) and large everyday motion collections (CMU, BMLmovi,
+KIT, ...).
 The joints are computed with the SMPL+H body model (``smplx`` package; model files from https://mano.is.tue.mpg.de,
 "Extended SMPL+H model (used in AMASS project)", or the smplx layout) and seen by a virtual camera per sequence
 (random distance / height / direction, looking at the person) to get the 2D inputs of the lifter.
@@ -161,7 +162,7 @@ def main(argv=None):
                         help="Directory with smplh/{male,female,neutral}/model.npz (AMASS) or smplh/SMPLH_MALE.npz (smplx).")
     parser.add_argument("--output-dir", default=None, help="Default: --root")
     parser.add_argument("--datasets", nargs="*", default=None,
-                        help="Subset of the AMASS datasets, e.g. MPI_Limits CMU BMLmovi (default: all found).")
+                        help="Subset of the AMASS datasets, e.g. PosePrior CMU BMLmovi (default: all found).")
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--max-frames", type=int, default=3000, help="Frames per sequence (after resampling).")
     parser.add_argument("--device", default="cpu")

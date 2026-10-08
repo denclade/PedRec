@@ -79,8 +79,9 @@ AIST Dance Video Database (research use, terms: https://aistdancedb.ongaaccel.jp
   limit it). --annotations-only: only the annotations (enough for the lifter sequences, no images).""",
     "amass": """\
 AMASS (Mahmood et al., ICCV 2019, https://amass.is.tue.mpg.de), registration + non-commercial license:
-    1. Register, download the "SMPL+H G" archives of the wanted datasets (recommended: MPI_Limits (range of motion),
-       CMU, BMLmovi, KIT, HDM05, TotalCapture, ...) and extract them to datasets/AMASS (-> AMASS/MPI_Limits/...).
+    1. Register, download the "SMPL+H G" archives of the wanted datasets (recommended: PosePrior (formerly
+       MPI_Limits: joint limits / range of motion), CMU, BMLmovi, KIT, HDM05, TotalCapture, ...) and extract them to
+       datasets/AMASS (-> AMASS/PosePrior/...).
     2. Body model SMPL+H (= SMPL body + MANO hands, the model AMASS is fitted with; it is hosted on the MANO site,
        not on smpl.is.tue.mpg.de, own registration): https://mano.is.tue.mpg.de -> Download -> "Extended SMPL+H
        model (used in AMASS project)" (smplh.tar.xz, npz files with 16 shape parameters), extracted to
@@ -271,18 +272,25 @@ def extract_h36m_images(datasets: str, splits: List[str], quality: int = 92, wor
         step = (steps or H36M_STEPS)[split]
         df = df.loc[range(0, len(df), step)]  # the rows the training loads (get_subsampled_df)
         groups = df.groupby(df["img_dir"].astype(str), observed=True)["img_id"]
+        missing: Dict[str, List[str]] = {}
+        needed: Dict[str, int] = {}
         with FrameExtractor(workers, total=groups.ngroups, desc=f"Human3.6m {split}") as extractor:
             for img_dir, ids in groups:
                 subject, _, name = img_dir.replace("\\", "/").split("/")
                 video = os.path.join(base, subject, "Videos", f"{name}.mp4")
                 frames = ids.to_numpy().astype(int) - 1
+                needed[subject] = needed.get(subject, 0) + 1
 
-                def check(written, img_dir=img_dir, video=video, expected=len(set(frames))):
+                def check(written, img_dir=img_dir, name=name, subject=subject, expected=len(set(frames))):
                     if written is None:
-                        extractor.progress.write(f"missing video {video}")
+                        missing.setdefault(subject, []).append(f"{name}.mp4")
                     elif len(written) != expected:
                         extractor.progress.write(f"  {img_dir}: only {len(written)} of {expected} frames in the video")
                 extractor.submit(video, os.path.join(base, img_dir), frames, check, quality=quality)
+        for subject, names in sorted(missing.items()):  # one line per subject instead of one per video
+            log(f"{split}/{subject}: {len(names)} of {needed[subject]} videos missing in "
+                f"{os.path.join(base, subject, 'Videos')} (e.g. {', '.join(sorted(names)[:3])}); the subject archive "
+                f"is probably incomplete, download / extract it again (see: info h36m)")
 
 def get_3dhp(datasets: str, accept_license: bool, subjects: List[int], cameras: List[int], keep_archives: bool):
     if not accept_license:

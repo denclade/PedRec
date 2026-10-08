@@ -34,6 +34,7 @@ SIM_PATTERN = "view_{cam_name}-frame_{id}.{type}"  # SIM-ROM / SIM-Circle / SIM-
 IMG_PATTERN = "img_{id}.{type}"  # Human3.6m and the converted datasets
 H36M_STEPS = {"train": 10, "val": 64}  # rows the training / validation loads (systematic subsampling)
 COCO_IMAGES = {"train": 118287, "val": 5000}
+AMASS_ROM_SUBSETS = ("PosePrior", "MPI_Limits")  # range of motion subset; current AMASS downloads name it PosePrior
 
 
 @dataclass
@@ -89,13 +90,34 @@ class ImageSampler:
             self.cache = {}
         self.changed = False
 
-    def paths(self, df_path: str, pattern: str, step: int = 1) -> List[str]:
+    def _key(self, df_path: str, *parts) -> str:
         stat = os.stat(df_path)
-        key = f"{os.path.abspath(df_path)}|{stat.st_size}|{stat.st_mtime_ns}|{pattern}|{step}|{self.samples}"
-        if key not in self.cache:
-            import pandas as pd
+        return "|".join([os.path.abspath(df_path), str(stat.st_size), str(stat.st_mtime_ns)] + [str(p) for p in parts])
+
+    def _read(self, df_path: str):
+        """Reads the dataframe (once per run), drops cache entries of older versions of it."""
+        import pandas as pd
+        if getattr(self, "_df_path", None) != df_path:
             print(f"  reading {df_path} ...", flush=True)
-            df = pd.read_pickle(df_path)
+            self._df, self._df_path = pd.read_pickle(df_path), df_path
+            current = self._key(df_path)
+            self.cache = {k: v for k, v in self.cache.items()
+                          if not k.startswith(os.path.abspath(df_path) + "|") or k.startswith(current + "|")}
+            self.changed = True
+        return self._df
+
+    def img_dirs(self, df_path: str) -> List[str]:
+        """All image directories of the dataframe (e.g. H36M: <subject>/Images/<video name>)."""
+        key = self._key(df_path, "img_dirs")
+        if key not in self.cache:
+            self.cache[key] = sorted(self._read(df_path)["img_dir"].astype(str).unique().tolist())
+            self.changed = True
+        return self.cache[key]
+
+    def paths(self, df_path: str, pattern: str, step: int = 1) -> List[str]:
+        key = self._key(df_path, pattern, step, self.samples)
+        if key not in self.cache:
+            df = self._read(df_path)
             rows = np.arange(0, len(df), step)
             rows = rows[np.unique(np.linspace(0, len(rows) - 1, min(self.samples, len(rows))).astype(int))] \
                 if len(rows) else rows
@@ -105,7 +127,6 @@ class ImageSampler:
                 cam_name = os.path.basename(os.path.normpath(img_dir))
                 paths.append(os.path.join(img_dir, pattern.format(id=str(int(img_id)).zfill(5), type=img_type,
                                                                   cam_name=cam_name)))
-            self.cache = {k: v for k, v in self.cache.items() if not k.startswith(os.path.abspath(df_path) + "|")}
             self.cache[key] = paths
             self.changed = True
         return self.cache[key]
@@ -196,11 +217,27 @@ def check_pedrec_training(paths, datasets: str, sampler: ImageSampler) -> Group:
                                          "mise run data:h36m:images")
         if images_ok:
             group.add(f"Human3.6m {split} videos", INFO, f"{videos} videos (only needed to extract the images)")
-        else:
+            continue
+        fix = "mise run download:datasets:info h36m  (registration, only the \"Videos\"), then mise run data:h36m:images"
+        df_path = os.path.join(root, filename)
+        if not videos or not os.path.isfile(df_path):
             group.add(f"Human3.6m {split} videos", OK if videos else MISSING,
-                      f"{videos} videos below {os.path.join(root, 'S*', 'Videos')}",
-                      "mise run download:datasets:info h36m  (registration, only the \"Videos\"), then mise run "
-                      "data:h36m:images")
+                      f"{videos} videos below {os.path.join(root, 'S*', 'Videos')}", fix)
+            continue
+        missing: Dict[str, List[str]] = {}
+        needed: Dict[str, int] = {}
+        for img_dir in sampler.img_dirs(df_path):  # <subject>/Images/<video name>
+            subject, _, name = img_dir.replace("\\", "/").split("/")
+            needed[subject] = needed.get(subject, 0) + 1
+            if not os.path.isfile(os.path.join(root, subject, "Videos", f"{name}.mp4")):
+                missing.setdefault(subject, []).append(f"{name}.mp4")
+        if not missing:
+            group.add(f"Human3.6m {split} videos", OK, f"all {sum(needed.values())} videos present")
+        else:
+            detail = "; ".join(f"{subject}: {len(names)}/{needed[subject]} missing (e.g. {sorted(names)[0]})"
+                               for subject, names in sorted(missing.items()))
+            group.add(f"Human3.6m {split} videos", PARTIAL if len(missing) < len(needed) or videos else MISSING,
+                      detail + " - subject archive incomplete?", fix)
     # SIM
     check_df_with_images(group, "SIM-ROM (train)", paths.sim_train_dir, paths.sim_train_filename, sampler, SIM_PATTERN,
                          1, "mise run download:datasets:pedrec --parts rom",
@@ -287,8 +324,9 @@ def check_extra_3d(datasets: str, data_root: str, sampler: ImageSampler) -> Tupl
             raw_detail = f"{raw} sequences in {', '.join(subsets) or 'no subsets'}; SMPL+H body model: " + \
                          (body_model or "missing (models/body_models/smplh/{male,female,neutral}/model.npz)")
             get = "mise run download:datasets:info amass (registration, + SMPL+H body model)"
-            if raw and "MPI_Limits" not in subsets:
-                raw_detail += "; MPI_Limits (range of motion) missing"
+            has_rom = any(name in subsets for name in AMASS_ROM_SUBSETS)
+            if raw and not has_rom:
+                raw_detail += "; PosePrior / MPI_Limits (range of motion) missing"
         kind = "pedrec" if extra.has_images else "seq"
         train_path = extra.path(datasets, "train", kind)
         converted[extra.name] = train_path is not None
@@ -304,8 +342,9 @@ def check_extra_3d(datasets: str, data_root: str, sampler: ImageSampler) -> Tupl
             group.add(f"{extra.title} images", OK if present == checked else PARTIAL,
                       f"{present}/{checked} sampled images present"
                       + (f", e.g. missing {first_missing}" if first_missing else ""), "" if present == checked else convert)
-        if extra.name == "amass" and raw and "MPI_Limits" not in subsets:
-            group.add("AMASS MPI_Limits", OPTIONAL, "range of motion subset not converted", get)
+        if extra.name == "amass" and raw and not has_rom:
+            group.add("AMASS PosePrior", OPTIONAL, "range of motion subset (PosePrior, formerly MPI_Limits) not "
+                      "downloaded", get)
     return group, converted
 
 
@@ -405,7 +444,8 @@ def run(data_root: Optional[str] = None, samples: int = 200, color: Optional[boo
                          if item.status in (MISSING, PARTIAL) and item.fix])
     recommendations = []
     if not converted.get("amass"):
-        recommendations.append("3D lifter: AMASS with at least MPI_Limits (joint limits / range of motion) and CMU "
+        recommendations.append("3D lifter: AMASS with at least PosePrior (= MPI_Limits, joint limits / range of "
+                               "motion) and CMU "
                                "gives far more pose variety than H36M + SIM (mise run download:datasets:info amass)")
     if not converted.get("fit3d") and not converted.get("aistpp"):
         recommendations.append("3D head of PedRecNet: real images of extreme poses from Fit3D (fitness, registration) "
