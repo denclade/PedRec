@@ -23,8 +23,9 @@ def get_skeleton_2d_affine_transform(skeleton: np.ndarray, trans, input_size: Im
         joint_num = joint.value
         if skeleton[joint_num][3] > 0.0:
             skeleton[joint_num, 0:2] = affine_transform_pt(skeleton[joint_num, 0:2], trans)
-            if skeleton[joint_num, 0] > input_size.width \
-                    or skeleton[joint_num, 1] > input_size.height \
+            # UDP: the crop spans [0, W - 1] x [0, H - 1], see get_normalization_size
+            if skeleton[joint_num, 0] > input_size.width - 1 \
+                    or skeleton[joint_num, 1] > input_size.height - 1 \
                     or skeleton[joint_num, 0] < 0 \
                     or skeleton[joint_num, 1] < 0:
                 skeleton[joint_num, 0:4] = 0
