@@ -71,7 +71,7 @@ _STAGES: List[PedRecTrainingStage] = [
         name="p2d_c", init_from=IMAGENET_INIT,
         description="2D pose + joint confidence on COCO + Human3.6m + SIM, backbone from ImageNet.",
         use_p3d_loss=False, use_orientation_loss=False,
-        epochs_round_1=2, epochs_round_2=60, round_2_lr_divisors=(2.0, 1.0)),
+        epochs_round_1=2, epochs_round_2=60, round_2_lr_divisors=(10.0, 2.0)),
     PedRecTrainingStage(
         name="p2d3d_c_o", init_from="p2d_c",
         description="Full network on COCO (MEBOW orientations) + Human3.6m + SIM. Used by the demo.",
