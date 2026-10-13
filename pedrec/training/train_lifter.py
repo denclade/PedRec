@@ -27,6 +27,7 @@ from pedrec.datasets.pose_sequence_dataset import PoseSequenceDataset
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
 from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter, SKELETON_3D_RANGE
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
+from pedrec.training.experiments.experiment_dataset_helper import WORKER_CONTEXT
 from pedrec.training.experiments.experiment_train_helper import init_experiment
 from pedrec.training.experiments.train_stepper import TrainingOptions, TrainStepper, steps_per_epoch
 from pedrec.utils.log_helper import configure_logger
@@ -93,11 +94,12 @@ def train_lifter(train_specs, val_specs, device: torch.device, output_path: str,
     train_set = ConcatDataset([PoseSequenceDataset(df, results, train=True, target_step=target_step,
                                                    gt_result_ratio=gt_result_ratio)
                                for _, df, results in train_specs])
+    context = WORKER_CONTEXT if num_workers > 0 else None  # share the sequences with the workers
     val_loaders = {name: DataLoader(PoseSequenceDataset(df, results, train=False, target_step=max(1, target_step)),
-                                    batch_size=batch_size, num_workers=num_workers)
+                                    batch_size=batch_size, num_workers=num_workers, multiprocessing_context=context)
                    for name, df, results in val_specs}
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True,
-                              persistent_workers=num_workers > 0)
+                              persistent_workers=num_workers > 0, multiprocessing_context=context)
 
     model = TemporalPoseLifter(len(SKELETON_PEDREC_JOINTS)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)

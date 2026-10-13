@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import os
 from typing import Dict, List
 
@@ -19,6 +20,20 @@ from pedrec.models.experiments.validation_set_model import ValidationSet
 from pedrec.training.experiments.experiment_train_helper import get_subsampled_dataset
 
 logger = logging.getLogger(__name__)
+
+# Python 3.14 starts DataLoader workers with forkserver: every worker unpickles its own copy of the dataset. With fork
+# the workers share the (numpy) annotations of the parent copy-on-write. The workers do not use CUDA.
+WORKER_CONTEXT = multiprocessing.get_context("fork")
+# Validation runs only once per epoch: fewer workers that are released afterwards instead of keeping the workers of
+# every validation set alive (and their dataset copies in memory) during the whole training.
+MAX_VALIDATION_WORKERS = 4
+
+
+def get_validation_loader(experiment_description: ExperimentDescription, dataset) -> DataLoader:
+    num_workers = min(experiment_description.num_workers, MAX_VALIDATION_WORKERS)
+    return DataLoader(dataset, batch_size=experiment_description.batch_size_validate, shuffle=False,
+                      num_workers=num_workers, pin_memory=True, worker_init_fn=worker_init_fn,
+                      multiprocessing_context=WORKER_CONTEXT if num_workers > 0 else None)
 
 
 def get_train_loader(experiment_description: ExperimentDescription, trans) -> DataLoader:
@@ -111,6 +126,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
     train_loader = DataLoader(train_set, batch_size=experiment_description.batch_size, shuffle=sampler is None,
                               sampler=sampler, num_workers=experiment_description.num_workers, pin_memory=True,
                               persistent_workers=experiment_description.num_workers > 0,
+                              multiprocessing_context=WORKER_CONTEXT if experiment_description.num_workers > 0 else None,
                               worker_init_fn=worker_init_fn, drop_last=True)
     return train_loader
 
@@ -144,9 +160,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                trans)
         coco_val_full_length = len(coco_val)
         coco_val = get_subsampled_dataset(coco_val, experiment_description.coco_val_subsampling)
-        coco_loader = DataLoader(coco_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                 num_workers=experiment_description.num_workers, pin_memory=True,
-                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
+        coco_loader = get_validation_loader(experiment_description, coco_val)
         validation_sets.append(ValidationSet(name="COCO", loader=coco_loader,
                                              val_set_cfg=None,
                                              validate_2D=experiment_description.validate_2d_coco,
@@ -164,9 +178,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                trans)
         tud_val_full_length = len(tud_val)
         tud_val = get_subsampled_dataset(tud_val, experiment_description.tud_val_subsampling)
-        tud_loader = DataLoader(tud_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                 num_workers=experiment_description.num_workers, pin_memory=True,
-                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
+        tud_loader = get_validation_loader(experiment_description, tud_val)
         validation_sets.append(ValidationSet(name="TUD", loader=tud_loader,
                                              val_set_cfg=None,
                                              validate_2D=False,
@@ -183,9 +195,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                 experiment_description.sim_val_dataset_cfg,
                                 experiment_description.net_cfg.model.input_size,
                                 trans)
-        sim_loader = DataLoader(sim_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                num_workers=experiment_description.num_workers, pin_memory=True,
-                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
+        sim_loader = get_validation_loader(experiment_description, sim_val)
         validation_sets.append(ValidationSet(name="SIM", loader=sim_loader,
                                              val_set_cfg=experiment_description.sim_val_dataset_cfg,
                                              validate_2D=experiment_description.validate_2d_sim,
@@ -203,9 +213,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                  experiment_description.experiment_paths.h36m_val_filename,
                                  DatasetType.VALIDATE, experiment_description.h36m_val_dataset_cfg,
                                  experiment_description.net_cfg.model.input_size, trans)
-        h36m_loader = DataLoader(h36m_val, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                 num_workers=experiment_description.num_workers, pin_memory=True,
-                              persistent_workers=experiment_description.num_workers > 0, worker_init_fn=worker_init_fn)
+        h36m_loader = get_validation_loader(experiment_description, h36m_val)
         validation_sets.append(ValidationSet(name="H36M", loader=h36m_loader,
                                              val_set_cfg=experiment_description.h36m_val_dataset_cfg,
                                              validate_2D=experiment_description.validate_2d_h36m,
@@ -228,10 +236,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
             if len(dataset) == 0:
                 logger.warning(f"Additional 3D dataset {extra.title}: validation set {path} is empty, skipped")
                 continue
-            loader = DataLoader(dataset, batch_size=experiment_description.batch_size_validate, shuffle=False,
-                                num_workers=experiment_description.num_workers, pin_memory=True,
-                                persistent_workers=experiment_description.num_workers > 0,
-                                worker_init_fn=worker_init_fn)
+            loader = get_validation_loader(experiment_description, dataset)
             validation_sets.append(ValidationSet(name=extra.title, loader=loader, val_set_cfg=val_cfg,
                                                  validate_2D=True, validate_3D=experiment_description.validate_3d_h36m,
                                                  validate_pose_conf=False, validate_env_position=False))
