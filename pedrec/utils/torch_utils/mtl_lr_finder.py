@@ -3,6 +3,7 @@ based on: https://github.com/davidtvs/pytorch-lr-finder
 """
 
 import copy
+import math
 import os
 
 import matplotlib.pyplot as plt
@@ -12,6 +13,8 @@ from packaging import version
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data import DataLoader
 from tqdm.autonotebook import tqdm
+
+from pedrec.utils.torch_utils.lr_suggestion import has_diverged, suggest_lr as suggest_lr_from_history
 
 PYTORCH_VERSION = version.parse(torch.__version__)
 
@@ -281,7 +284,7 @@ class MTLLRFinder(object):
                     "or child of `ValDataLoaderIter`.".format(type(val_loader))
                 )
 
-        for iteration in tqdm(range(num_iter)):
+        for iteration in tqdm(range(num_iter), desc="LR range test", unit="batch", dynamic_ncols=True):
             # Train on batch and retrieve loss
             loss = self._train_batch(
                 train_iter,
@@ -297,6 +300,11 @@ class MTLLRFinder(object):
             self.history["lr"].append(lr_schedule.get_lr()[0])
             lr_schedule.step()
 
+            if not math.isfinite(loss):
+                self.history["lr"].pop()
+                print("Stopping early, the loss is not finite")
+                break
+
             # Track the best loss and smooth it if smooth_f is specified
             if iteration == 0:
                 self.best_loss = loss
@@ -308,11 +316,10 @@ class MTLLRFinder(object):
 
             # Check if the loss has diverged; if it has, stop the test
             self.history["loss"].append(loss)
-            if loss > diverge_th * self.best_loss:
+            if has_diverged(loss, self.best_loss, diverge_th):
                 print("Stopping early, the loss has diverged")
                 break
 
-        print("Learning rate search finished. See the graph with {finder_name}.plot()")
 
     def _set_learning_rate(self, new_lrs):
         if not isinstance(new_lrs, list):
@@ -465,28 +472,20 @@ class MTLLRFinder(object):
         ax.plot(lrs, losses)
 
         # Plot the suggested LR
+        suggestion = None
         if suggest_lr:
-            # 'steepest': the point with steepest gradient (minimal gradient)
-            print("LR suggestion: steepest gradient")
-            min_grad_idx = None
-            try:
-                min_grad_idx = (np.gradient(np.array(losses))).argmin()
-            except ValueError:
-                print(
-                    "Failed to compute the gradients, there might not be enough points."
-                )
-            if min_grad_idx is not None:
-                print("Suggested LR: {:.2E}".format(lrs[min_grad_idx]))
-                ax.scatter(
-                    lrs[min_grad_idx],
-                    losses[min_grad_idx],
-                    s=75,
-                    marker="o",
-                    color="red",
-                    zorder=3,
-                    label="steepest gradient",
-                )
-                ax.legend()
+            suggestion = suggest_lr_from_history(self.history["lr"], self.history["loss"], skip_start, skip_end)
+            if suggestion.steepest_lr is not None:
+                ax.axvline(suggestion.steepest_lr, color="gray", linestyle=":", label="steepest descent")
+            if suggestion.min_loss_lr is not None:
+                ax.axvline(suggestion.min_loss_lr, color="gray", linestyle="--", label="minimal loss")
+            if suggestion.lr is not None:
+                ax.axvline(suggestion.lr, color="red", label=f"suggestion (minimal loss / 10): {suggestion.lr:.2e}")
+                print(f"Suggested LR: {suggestion.lr:.2E} (minimal loss at {suggestion.min_loss_lr:.2E} / 10)")
+            else:
+                ax.set_title(f"No suggestion: {suggestion.reason}", fontsize=8)
+                print(f"No LR suggestion: {suggestion.reason}")
+            ax.legend()
 
         if log_lr:
             ax.set_xscale("log")
@@ -500,8 +499,8 @@ class MTLLRFinder(object):
         if fig is not None:
             plt.show()
 
-        if suggest_lr and min_grad_idx:
-            return ax, lrs[min_grad_idx]
+        if suggestion is not None and suggestion.lr is not None:
+            return ax, suggestion.lr
         else:
             return ax
 

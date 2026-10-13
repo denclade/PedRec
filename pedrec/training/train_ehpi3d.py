@@ -83,11 +83,12 @@ def find_learning_rate(net, params, criterion, train_loader, device, output_path
     fig, ax = plt.subplots()
     result = lr_finder.plot(ax=ax)
     lr_finder.reset()
-    if not isinstance(result, tuple):
-        raise RuntimeError("LR range test did not return a suggestion. Pass a learning rate explicitly via --lr.")
-    _, suggested_lr = result
     fig.savefig(output_path)
     plt.close(fig)
+    if not isinstance(result, tuple):
+        raise RuntimeError(f"LR range test did not return a suggestion (plot: {output_path}). "
+                           f"Pass a learning rate explicitly via --lr.")
+    _, suggested_lr = result
     logger.info(f"LR range test suggested lr={suggested_lr:.2e} (plot: {output_path})")
     return suggested_lr
 

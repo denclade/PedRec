@@ -69,7 +69,8 @@ def validate(net: nn.Module, val_loader: DataLoader,
              validate_3D: bool = True,
              validate_orientation: bool = True,
              validate_pose_conf: bool = True,
-             validate_env_position: bool = True) -> ValidationResults:
+             validate_env_position: bool = True,
+             desc: str = None) -> ValidationResults:
     start = time.time()
     loss_total = 0.0
     net.eval()
@@ -83,7 +84,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
     env_position_preds = []
     count = 0
     with torch.inference_mode():
-        for test_data in tqdm(val_loader):
+        for test_data in tqdm(val_loader, desc=desc, unit="batch", leave=False, dynamic_ncols=True):
             # if count > 2:
             #     break
             # count += 1

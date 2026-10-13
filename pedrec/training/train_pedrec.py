@@ -157,17 +157,17 @@ def find_learning_rate(net, params, train_loader, device, output_path: str) -> f
 
     optimizer = torch.optim.AdamW(params, lr=1e-7, weight_decay=1e-2)
     lr_finder = MTLLRFinder(optimizer, net, device=device)
-    lr_finder.range_test(train_loader, end_lr=0.05, num_iter=100)
+    # up to lr 1, the test stops as soon as the loss diverges (the suggestion needs the rise behind the minimum)
+    lr_finder.range_test(train_loader, end_lr=1.0, num_iter=200)
     fig, ax = plt.subplots()
     result = lr_finder.plot(ax=ax)
     lr_finder.reset()
-    if isinstance(result, tuple):
-        _, suggested_lr = result
-    else:
-        raise RuntimeError("LR range test did not return a suggestion (loss did not decrease). "
-                           "Pass a learning rate explicitly via --lr.")
     fig.savefig(output_path)
     plt.close(fig)
+    if not isinstance(result, tuple):
+        raise RuntimeError(f"LR range test did not return a suggestion (plot: {output_path}). "
+                           f"Pass a learning rate explicitly via --lr.")
+    _, suggested_lr = result
     logger.info(f"LR range test suggested lr={suggested_lr:.2e} (plot: {output_path})")
     return suggested_lr
 
@@ -242,7 +242,8 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         scheduler=scheduler,
         frozen_layers=frozen_layers,
         max_lrs=max_lrs,
-        optimizer_parameters=OPTIMIZER_PARAMS
+        optimizer_parameters=OPTIMIZER_PARAMS,
+        name=f"Round {round_idx + 1}/2 ({'backbone frozen' if frozen_layers else 'full network'})"
     )
     description.experiment_rounds.append(round_description)
 

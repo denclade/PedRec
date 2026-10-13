@@ -1,3 +1,5 @@
+import contextlib
+import io
 import math
 import os
 from random import random
@@ -42,7 +44,8 @@ class CocoDataset(Dataset):
             self.img_dir = os.path.join(self.dataset_path, 'test2017')
 
         self.mhbow_gt = self.get_mhbow_gt()
-        self.coco = COCO(self.annotation_path)
+        with contextlib.redirect_stdout(io.StringIO()):  # pycocotools prints its loading progress
+            self.coco = COCO(self.annotation_path)
         coco_classes = [cat['name'] for cat in self.coco.loadCats(self.coco.getCatIds())]
 
         self.transform = transform

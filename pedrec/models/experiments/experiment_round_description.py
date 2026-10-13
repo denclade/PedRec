@@ -17,3 +17,4 @@ class ExperimentRoundDescription(object):
     max_lrs: List[float]
     frozen_layers: List[nn.Module]
     validation_results: List[EpochValidationResults] = None
+    name: str = ""  # for the terminal output, e.g. "Round 1/2 (backbone frozen)"

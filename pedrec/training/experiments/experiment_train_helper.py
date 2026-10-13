@@ -68,14 +68,14 @@ def get_outputs_loss_mtl(net: nn.Module, model_input: torch.Tensor, labels: torc
 
 
 def train(net: nn.Module, stepper: TrainStepper, train_loader: DataLoader, device: torch.device,
-          get_outputs_loss_func: Callable) -> Tuple[float, float]:
+          get_outputs_loss_func: Callable, desc: str = None) -> Tuple[float, float]:
     """One epoch. Returns (mean loss of the finite steps, duration in seconds)."""
     start = time.time()
     loss_total = 0.0
     finite_batches = 0
     net.train()
     num_batches = len(train_loader)
-    with tqdm(total=num_batches) as pbar:
+    with tqdm(total=num_batches, desc=desc, unit="batch", dynamic_ncols=True) as pbar:
         for i, (inputs, labels) in enumerate(train_loader):
             inputs = inputs.to(device, non_blocking=True)
             labels = move_to_device(labels, device)
@@ -118,7 +118,9 @@ def train_round(net: nn.Module, experiment_description: ExperimentDescription,
         stepper.load_state_dict(stepper_state)
     epoch_results: List[EpochValidationResults] = []
     for epoch in range(start_epoch, experiment_round_description.num_epochs):
-        train_loss, train_time = train(net, stepper, train_loader, device, get_outputs_loss_func)
+        name = experiment_round_description.name or "Round"
+        title = f"{name}, epoch {epoch + 1}/{experiment_round_description.num_epochs}"
+        train_loss, train_time = train(net, stepper, train_loader, device, get_outputs_loss_func, desc=title)
         eval_net = ema.module if ema is not None else net
         validation_results = validate_val_sets(eval_net, validation_sets, get_outputs_loss_func, get_gt_pred_func,
                                                device, experiment_description.net_cfg.model.input_size)
@@ -126,7 +128,7 @@ def train_round(net: nn.Module, experiment_description: ExperimentDescription,
                                          validation_results=validation_results)
         epoch_results.append(results)
         if log:
-            log_epoch_validation_results(results)
+            log_epoch_validation_results(results, title, lr=max(experiment_round_description.scheduler.get_last_lr()))
         if on_epoch_end is not None:
             on_epoch_end(epoch, eval_net, results, stepper)
     return epoch_results
@@ -147,7 +149,7 @@ def validate_val_sets(net, validation_sets: List[ValidationSet], get_outputs_los
                               validate_orientation=val_set.validate_orientation,
                               validate_pose_conf=val_set.validate_pose_conf,
                               validate_env_position=val_set.validate_env_position,
-                              skeleton_3d_range=skeleton_3d_range)
+                              skeleton_3d_range=skeleton_3d_range, desc=f"Validation {val_set.name}")
         results[val_set.name] = val_result
     return results
 

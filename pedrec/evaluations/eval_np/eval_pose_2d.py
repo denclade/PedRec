@@ -83,8 +83,11 @@ def get_pck(normalized_joint_distances, threshold, num_visible_joints_per_joint:
             joints_visible: np.ndarray):
     joint_distances_below_threshold = get_visible_joint_distances_below_threshold(normalized_joint_distances, threshold,
                                                                                   joints_visible)
-    return np.divide(100. * np.sum(np.transpose(joint_distances_below_threshold, (1, 0)), axis=1),
-                     num_visible_joints_per_joint)
+    # joints without any visible ground truth in the set (e.g. the PedRec joints COCO does not have) -> NaN, ignored
+    # by the mean
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.divide(100. * np.sum(np.transpose(joint_distances_below_threshold, (1, 0)), axis=1),
+                         num_visible_joints_per_joint)
 
 
 def get_visible_joint_distances_below_threshold(normalized_joint_distances: np.ndarray, threshold: float,
