@@ -22,6 +22,7 @@ import numpy as np
 from tqdm import tqdm
 
 from pedrec.configs.default_paths import get_data_root
+from pedrec.datasets.extra_3d_datasets import mpi_inf_3dhp_test_set_dir
 from pedrec.tools.datasets.pedrec_df_writer import (J, FrameExtractor, PedRecDfWriter, Sequence, _check_scale,
                                                     image_scale, to_pedrec_joints)
 
@@ -93,8 +94,10 @@ def convert_train(root: str, output_dir: str, image_step: int, subjects=range(1,
 def convert_test(root: str, output_dir: str, image_step: int, max_image_size: Optional[int] = 1024):
     import h5py
     writer = PedRecDfWriter(dataset_type=1)
+    test_set_dir = mpi_inf_3dhp_test_set_dir(root)
+    converted = 0
     for subject in range(1, 7):
-        ts_dir = os.path.join(root, "mpi_inf_3dhp_test_set", f"TS{subject}")
+        ts_dir = os.path.join(test_set_dir, f"TS{subject}")
         annot_path = os.path.join(ts_dir, "annot_data.mat")
         if not os.path.isfile(annot_path):
             print(f"missing {annot_path}, skipped")
@@ -131,6 +134,10 @@ def convert_test(root: str, output_dir: str, image_step: int, max_image_size: Op
         fps = 50.0 if subject <= 4 else 25.0
         writer.add(Sequence("MPI-INF-3DHP", name, name, p2d * scale, p3d, supported, int(round(width * scale)),
                             int(round(height * scale)), fps, valid=valid), image_frames)
+        converted += 1
+    if converted == 0:
+        # an empty validation set would only fail later in the training
+        raise FileNotFoundError(f"No test sequence TS1-TS6 found in {test_set_dir}")
     writer.save(os.path.join(output_dir, "mpi_inf_3dhp_val_pedrec.pkl"),
                 os.path.join(output_dir, "mpi_inf_3dhp_val_seq.pkl"))
 
@@ -145,11 +152,15 @@ def main(argv=None):
                         help="Downscale the 2048x2048 images to this size (longer side), 0 = original size.")
     parser.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
     parser.add_argument("--cameras", nargs="*", type=int, default=TRAIN_CAMERAS)
+    parser.add_argument("--splits", nargs="*", choices=["train", "val"], default=["train", "val"],
+                        help="Convert only these splits (val = test set TS1-TS6).")
     args = parser.parse_args(argv)
     output_dir = args.output_dir or args.root
-    convert_train(args.root, output_dir, args.image_step, cameras=args.cameras, max_image_size=args.max_image_size,
-                  workers=args.workers)
-    convert_test(args.root, output_dir, args.image_step, max_image_size=args.max_image_size)
+    if "train" in args.splits:
+        convert_train(args.root, output_dir, args.image_step, cameras=args.cameras,
+                      max_image_size=args.max_image_size, workers=args.workers)
+    if "val" in args.splits:
+        convert_test(args.root, output_dir, args.image_step, max_image_size=args.max_image_size)
 
 
 if __name__ == "__main__":

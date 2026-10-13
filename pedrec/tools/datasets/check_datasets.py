@@ -23,7 +23,7 @@ import numpy as np
 
 from pedrec.configs import default_paths
 from pedrec.configs.default_paths import get_data_root
-from pedrec.datasets.extra_3d_datasets import EXTRA_3D_DATASETS
+from pedrec.datasets.extra_3d_datasets import EXTRA_3D_DATASETS, mpi_inf_3dhp_test_set_dir
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
 
 OK, PARTIAL, MISSING, OPTIONAL, INFO = "ok", "partial", "missing", "optional", "info"
@@ -302,7 +302,7 @@ def check_extra_3d(datasets: str, data_root: str, sampler: ImageSampler) -> Tupl
         if extra.name == "mpi_inf_3dhp":
             raw = len(glob.glob(os.path.join(root, "S*", "Seq*", "annot.mat")))
             videos = len(glob.glob(os.path.join(root, "S*", "Seq*", "imageSequence", "video_*.avi")))
-            test = len(glob.glob(os.path.join(root, "mpi_inf_3dhp_test_set", "TS*", "annot_data.mat")))
+            test = len(glob.glob(os.path.join(mpi_inf_3dhp_test_set_dir(root), "TS*", "annot_data.mat")))
             raw_detail = f"{raw}/16 training sequences, {videos} videos, {test}/6 test sequences"
             get = "mise run download:datasets:3dhp --accept-license"
         elif extra.name == "fit3d":

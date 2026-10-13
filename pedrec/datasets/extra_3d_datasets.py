@@ -29,3 +29,13 @@ EXTRA_3D_DATASETS: List[Extra3DDataset] = [
     Extra3DDataset("aistpp", "AIST++", "AIST++", "aistpp"),
     Extra3DDataset("amass", "AMASS", "AMASS", "amass", has_images=False),
 ]
+
+
+def mpi_inf_3dhp_test_set_dir(root: str) -> str:
+    """
+    The MPI-INF-3DHP test set directory below the dataset root. The archive contains a top level
+    ``mpi_inf_3dhp_test_set`` folder, so extracting it into a folder of that name nests it twice; accept both.
+    """
+    test_set_dir = os.path.join(root, "mpi_inf_3dhp_test_set")
+    nested = os.path.join(test_set_dir, "mpi_inf_3dhp_test_set")
+    return nested if os.path.isdir(nested) else test_set_dir

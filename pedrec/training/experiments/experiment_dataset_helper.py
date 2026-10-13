@@ -225,6 +225,9 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
             val_cfg = get_extra_3d_dataset_cfg(extra.val_subsample)
             dataset = PedRecDataset(os.path.dirname(path), os.path.basename(path), DatasetType.VALIDATE, val_cfg,
                                     experiment_description.net_cfg.model.input_size, trans)
+            if len(dataset) == 0:
+                logger.warning(f"Additional 3D dataset {extra.title}: validation set {path} is empty, skipped")
+                continue
             loader = DataLoader(dataset, batch_size=experiment_description.batch_size_validate, shuffle=False,
                                 num_workers=experiment_description.num_workers, pin_memory=True,
                                 persistent_workers=experiment_description.num_workers > 0,
