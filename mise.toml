@@ -67,6 +67,7 @@ run = [
 [tasks."download:demo"]
 description = "Download the demo video into $PEDREC_DATA_DIR/demo"
 run = """
+#!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "$PEDREC_DATA_DIR/demo"
 f="$PEDREC_DATA_DIR/demo/05070850_9672.m4v"
@@ -101,7 +102,8 @@ run = "python pedrec/tools/datasets/download_datasets.py aistpp"
 
 [tasks."download:datasets:info"]
 description = "How to get a registration-only dataset: mise run download:datasets:info <h36m|fit3d|amass|mebow|tud|...>"
-run = 'python pedrec/tools/datasets/download_datasets.py info {{arg(name="name")}}'
+usage = 'arg "<name>"'
+run = 'python pedrec/tools/datasets/download_datasets.py info ${usage_name}'
 
 [tasks."data:h36m:images"]
 description = "Extract the Human3.6m frames the training uses (every 10th train / 64th val frame; --val-step 1 / --train-step 1 for all) from the registered H36M videos"
@@ -134,19 +136,23 @@ run = "python pedrec/demo.py"
 
 [tasks."demo:video"]
 description = "Qt demo on a video file: mise run demo:video <file>"
-run = 'python pedrec/demo.py --video "{{arg(name="video")}}"'
+usage = 'arg "<video>"'
+run = 'python pedrec/demo.py --video "${usage_video}"'
 
 [tasks."demo:images"]
 description = "Qt demo on an image sequence directory: mise run demo:images <dir>"
-run = 'python pedrec/demo.py --images "{{arg(name="dir")}}"'
+usage = 'arg "<dir>"'
+run = 'python pedrec/demo.py --images "${usage_dir}"'
 
 [tasks."demo:image"]
 description = "Qt demo on a single image: mise run demo:image <file>"
-run = 'python pedrec/demo.py --image "{{arg(name="image")}}"'
+usage = 'arg "<image>"'
+run = 'python pedrec/demo.py --image "${usage_image}"'
 
 [tasks."demo:webcam"]
 description = "Qt demo on a webcam: mise run demo:webcam [id]"
-run = 'python pedrec/demo.py --webcam {{arg(name="id", default="0")}} --size 1280x720'
+usage = 'arg "[id]" default="0"'
+run = 'python pedrec/demo.py --webcam ${usage_id} --size 1280x720'
 
 [tasks."demo:headless"]
 description = "Full pipeline without GUI; add --output out.mp4 / --json out.json and --video/--images/--image"
@@ -187,9 +193,11 @@ run = "python pedrec/training/train_pedrec.py"
 
 [tasks."train:pedrec:chain"]
 description = "Train all PedRecNet stages up to the given one (default p2d3d_c_o), skipping stages with an existing checkpoint"
+usage = 'arg "[stage]" default="p2d3d_c_o"'
 run = """
+#!/usr/bin/env bash
 set -euo pipefail
-target="{{arg(name="stage", default="p2d3d_c_o")}}"
+target="${usage_stage}"
 for stage in $(python pedrec/training/train_pedrec.py --chain --stage "$target" | sed 's/ -> / /g'); do
   ckpt="$PEDREC_DATA_DIR/models/pedrec/single_results/experiment_pedrec_v2_${stage}_0.pth"
   if [ -f "$ckpt" ]; then echo "### skipping $stage (checkpoint exists: $ckpt)"; continue; fi
