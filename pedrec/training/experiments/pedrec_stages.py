@@ -93,7 +93,10 @@ _STAGES: List[PedRecTrainingStage] = [
         name="p2d_c", init_from=IMAGENET_INIT,
         description="2D pose + joint confidence on COCO + Human3.6m + SIM, backbone from ImageNet.",
         use_p3d_loss=False, use_orientation_loss=False, dataset_weights=DATASET_WEIGHTS_2D,
-        epochs_round_1=2, epochs_round_2=60, round_2_lr_divisors=(10.0, 2.0)),
+        # Fixed lr: the LR range test suggested 1.3e-2 and 3.2e-2 in two runs (minimal loss at 0.13 / 0.32), too high
+        # for the pretrained backbone in round 2 (lr / 10). 1e-2 is just below the run that trained the 2D heads well
+        # (1.3e-2 -> backbone 1.3e-3, heads 6.6e-3 in round 2). --lr / --lr-finder override it.
+        epochs_round_1=2, epochs_round_2=60, round_2_lr_divisors=(10.0, 2.0), fixed_lr=1e-2),
     PedRecTrainingStage(
         name="p2d3d_c_o", init_from="p2d_c",
         description="Full network on COCO (MEBOW orientations) + Human3.6m + SIM. Used by the demo.",

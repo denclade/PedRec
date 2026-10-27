@@ -211,7 +211,8 @@ def test_convention_adapter_learns_a_hip_convention():
         optimizer.step()
         errors.append(error.item())
     assert errors[-1] < 0.1 * errors[0]
-    assert "h36m: " in adapter.describe()[get_convention_index("h36m")]
+    description = adapter.describe()[get_convention_index("h36m")]
+    assert description.startswith("h36m: ") and "hip_center" not in description  # root stays at the origin
 
 
 def test_loss_head_without_adapter_ignores_conventions():
@@ -230,3 +231,16 @@ def test_extract_network_from_checkpoint_with_convention_adapter(tmp_path, net):
     loaded = load_pedrec_net(path)  # inference loads only the network
     assert torch.equal(next(loaded.parameters()), next(net.parameters()))
     assert set(torch.load(output, weights_only=True)) == set(net.state_dict())
+
+
+def test_convention_adapter_describes_net_offsets_in_body_coordinates():
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import ConventionAdapter, get_convention_index
+    adapter = ConventionAdapter()
+    h36m = get_convention_index("h36m")
+    with torch.no_grad():  # wider hips: left_hip -= 0.1 (right_hip - left_hip), symmetrized to 0.05 per side
+        adapter.offsets[h36m, J.left_hip.value, J.right_hip.value] = -0.1
+    displacement = adapter.displacements()[h36m]
+    assert displacement[J.left_hip.value, 0] > 10 and displacement[J.right_hip.value, 0] < -10  # mm, outwards
+    assert "hip out +1.1 up +0.0 fwd +0.0 cm" in adapter.describe()[h36m]
+    assert adapter.describe()[get_convention_index("fit3d")] == "fit3d: identity"

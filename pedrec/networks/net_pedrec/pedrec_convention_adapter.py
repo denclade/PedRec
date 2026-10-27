@@ -40,6 +40,27 @@ _SOURCES.update({
 })
 
 
+# Standing SIM pose in body coordinates (mm; x to the left side, y up, z forward; hip center at the origin): median of
+# the upright frames of rt_rom_01b / rt_validate_3d, left / right symmetrized. Only used to report the learned offsets.
+_REFERENCE_POSE_MM = {
+    J.nose: (0, 709, 140), J.left_eye: (35, 745, 135), J.left_ear: (75, 750, 70), J.left_shoulder: (176, 572, 0),
+    J.left_elbow: (268, 343, -19), J.left_wrist: (321, 118, 38), J.left_hip: (106, 0, 0), J.left_knee: (104, -434, -30),
+    J.left_ankle: (90, -828, -85), J.hip_center: (0, 0, 0), J.spine_center: (0, 283, 16), J.neck: (0, 567, 34),
+    J.head_lower: (0, 651, 59), J.head_upper: (0, 888, 76), J.left_foot_end: (122, -953, 94),
+    J.left_hand_end: (296, 13, 66),
+}
+
+
+def get_reference_pose(num_joints: int = 26) -> torch.Tensor:
+    """J x 3 standing reference pose in mm (body coordinates, see _REFERENCE_POSE_MM)."""
+    pose = torch.zeros(num_joints, 3)
+    for joint, (x, y, z) in _REFERENCE_POSE_MM.items():
+        pose[joint.value] = torch.tensor([x, y, z], dtype=torch.float32)
+    for left, right in SKELETON_PEDREC_LR_PAIRS:
+        pose[right] = pose[left] * torch.tensor([-1.0, 1.0, 1.0])
+    return pose
+
+
 def get_convention_index(dataset_name: str) -> int:
     """Index of the dataset convention, NO_CONVENTION for SIM / datasets without an own convention."""
     return CONVENTIONS.index(dataset_name) if dataset_name in CONVENTIONS else NO_CONVENTION
@@ -103,17 +124,33 @@ class ConventionAdapter(nn.Module):
         pose_3d = torch.cat([adapted_3d, pose_3d[..., 3:]], dim=-1)
         return pose_2d, pose_3d
 
-    def describe(self, top: int = 3, min_weight: float = 0.01) -> List[str]:
-        """The largest learned offsets per convention, e.g. 'h36m: left_hip += 0.12 (right_hip - left_hip)'."""
-        weights = self.offset_weights().detach().cpu()
+    def displacements(self) -> torch.Tensor:
+        """C x J x 3 net offsets (mm) of the standing reference pose in body coordinates (x left, y up, z forward)."""
+        matrices = self.matrices().detach().cpu()
+        reference = get_reference_pose(matrices.shape[1])
+        adapted = matrices @ reference
+        root = J.hip_center.value
+        adapted = adapted - adapted[:, root:root + 1]
+        return adapted - reference
+
+    def describe(self, min_cm: float = 0.5) -> List[str]:
+        """
+        The learned net offsets per convention on the reference pose, left / right symmetric joints once (outward
+        positive), e.g. 'h36m: hip out +2.3 up +6.1 fwd -0.4 cm'.
+        """
+        right_joints = {right for _, right in SKELETON_PEDREC_LR_PAIRS}
+        displacements = self.displacements() / 10.0
         lines = []
         for c, name in enumerate(self.conventions):
-            entries = []
-            for k in range(weights.shape[1]):
-                for i in range(weights.shape[2]):
-                    if i != k and abs(weights[c, k, i]) >= min_weight:
-                        entries.append((abs(float(weights[c, k, i])), k, i, float(weights[c, k, i])))
-            entries.sort(reverse=True)
-            terms = [f"{J(k).name} += {w:+.3f} ({J(i).name} - {J(k).name})" for _, k, i, w in entries[:top]]
-            lines.append(f"{name}: " + ("; ".join(terms) if terms else "identity"))
+            terms = []
+            for k in range(displacements.shape[1]):
+                if k in right_joints:
+                    continue
+                x, y, z = displacements[c, k].tolist()
+                if max(abs(x), abs(y), abs(z)) < min_cm:
+                    continue
+                joint = J(k).name
+                lateral = f"out {x:+.1f}" if joint.startswith("left_") else f"left {x:+.1f}"
+                terms.append(f"{joint.replace('left_', '')} {lateral} up {y:+.1f} fwd {z:+.1f}")
+            lines.append(f"{name}: " + (" | ".join(terms) + " cm" if terms else "identity"))
         return lines

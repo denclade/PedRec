@@ -178,11 +178,16 @@ def find_learning_rate(net, params, train_loader, device, output_path: str) -> f
     return suggested_lr
 
 
+# The convention adapter has its own, stage independent lr: offsets of ~0.1 are reached within a few thousand steps,
+# with the head lr (up to 1e-2) they jump by several cm per step.
+CONVENTION_ADAPTER_MAX_LR = 1e-3
+
+
 def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, backbone_divisor: float = 1.0,
-                head_divisor: float = 1.0):
+                head_divisor: float = 1.0, convention_adapter: bool = False):
     """
-    One max lr per parameter group (two groups per layer: with / without weight decay, plus the sigmas).
-    Heads whose loss is disabled get lr 0.
+    One max lr per parameter group (two groups per layer: with / without weight decay, plus the sigmas and the
+    convention adapter). Heads whose loss is disabled get lr 0.
     """
     backbone = base_lr / backbone_divisor
     head = base_lr / head_divisor
@@ -194,7 +199,7 @@ def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, backbone_divisor: fl
         head if stage.use_orientation_loss else 0, head if stage.use_orientation_loss else 0,  # orientation
         head if stage.use_conf_loss else 0, head if stage.use_conf_loss else 0,  # conf
         head if stage.train_sigmas else 0,  # sigmas
-    ]
+    ] + ([CONVENTION_ADAPTER_MAX_LR] if convention_adapter else [])
 
 
 class StageState:
@@ -321,10 +326,10 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
                 f"effective batch size {description.batch_size * options.accumulate}")
 
     # Append the MTL weighting parameters AFTER the LR range test.
-    loss_head_params = [net.loss_head.log_vars]
-    if net.loss_head.convention_adapter is not None:
-        loss_head_params += list(net.loss_head.convention_adapter.parameters())
-    params.append({'params': loss_head_params, 'weight_decay': 1e-2})
+    params.append({'params': [net.loss_head.log_vars], 'weight_decay': 1e-2})
+    use_adapter = net.loss_head.convention_adapter is not None
+    if use_adapter:  # regularized towards the identity by its own loss term
+        params.append({'params': list(net.loss_head.convention_adapter.parameters()), 'weight_decay': 0})
 
     ema = TrainStepper.create_ema(net, options)
     if stage_state.loaded is not None:
@@ -349,7 +354,7 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
             ema = TrainStepper.create_ema(net, options)
     elif resume_round == 0:
         run_round(0, net, description, params,
-                  max_lrs=get_max_lrs(stage, description.suggested_lr),
+                  max_lrs=get_max_lrs(stage, description.suggested_lr, convention_adapter=use_adapter),
                   epochs=epochs_round_1,
                   frozen_layers=[net.model.backbone],
                   train_loader=train_loader, validation_sets=validation_sets, device=device,
@@ -360,7 +365,8 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
     # Round 2: everything trainable with reduced lr
     backbone_divisor, head_divisor = stage.round_2_lr_divisors
     run_round(1, net, description, params,
-              max_lrs=get_max_lrs(stage, description.suggested_lr, backbone_divisor, head_divisor),
+              max_lrs=get_max_lrs(stage, description.suggested_lr, backbone_divisor, head_divisor,
+                                      convention_adapter=use_adapter),
               epochs=epochs_round_2,
               frozen_layers=[],
               train_loader=train_loader, validation_sets=validation_sets, device=device,

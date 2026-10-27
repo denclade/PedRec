@@ -243,9 +243,10 @@ COCO, Human3.6m and SIM starting from the ImageNet backbone, `p2d3d_c_o` adds th
 with the MEBOW labels). Each stage trains two rounds (frozen backbone, then the full network), writes
 `experiment_pedrec_v2_<stage>_0_01.pth` / `experiment_pedrec_v2_<stage>_0.pth` (EMA weights), the best epoch
 `experiment_pedrec_v2_<stage>_0_best.pth` and a markdown protocol into *data/models/pedrec/single_results/*. The epochs
-per round are stage defaults (`--epochs-round-1/2` override them). `p2d3d_c_o` uses a fixed lr (v1 level: 1e-3 with
-frozen backbone, then backbone 1e-4 / heads 2e-4); `p2d_c` runs the LR range test first (plot next to the checkpoint),
-`--lr` / `--lr-finder` override both. Every stage starts with equal multi task loss weights (Kendall uncertainty
+per round are stage defaults (`--epochs-round-1/2` override them). Both stages use a fixed lr (`p2d_c`: 1e-2, round 2 backbone
+1e-3 / heads 5e-3; `p2d3d_c_o`: v1 level, 1e-3 with frozen backbone, then backbone 1e-4 / heads 2e-4); the LR range
+test proposed values 100x apart between runs. `--lr` sets another lr, `--lr-finder` runs the LR range test (plot next
+to the checkpoint). Every stage starts with equal multi task loss weights (Kendall uncertainty
 weighting, the learned log variances are logged every epoch).
 
 Dataset balancing: every stage samples the training datasets with fixed relative probabilities per dataset group
