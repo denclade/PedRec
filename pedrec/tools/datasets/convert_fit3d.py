@@ -142,14 +142,21 @@ def leg_side_agreement(df) -> float:
 def fix_leg_sides(path: str) -> bool:
     """
     Repairs a dataframe written with the former mapping (legs mirrored) by swapping the left / right leg columns in 2D
-    and 3D. Only applied if the legs are mirrored, so running it twice is safe. :return: True if the file was changed
+    and 3D. Only applied if the legs are mirrored, so running it twice is safe. The skeleton columns are written in
+    joint order (the first version of this repair only renamed them, in place). :return: True if the file was changed
     """
     import pandas as pd
+    from pedrec.utils.pedrec_dataset_helper import order_skeleton_columns
     df = pd.read_pickle(path)
     agreement = leg_side_agreement(df)
     if agreement > 0:
-        print(f"{path}: leg sides consistent ({agreement:+.2f}), unchanged")
-        return False
+        ordered = order_skeleton_columns(df)
+        if list(ordered.columns) == list(df.columns):
+            print(f"{path}: leg sides consistent ({agreement:+.2f}), unchanged")
+            return False
+        ordered.to_pickle(path)
+        print(f"{path}: leg sides consistent ({agreement:+.2f}), skeleton columns put into joint order")
+        return True
     renames = {}
     for column in df.columns:
         for joint in LEG_JOINTS:
@@ -158,7 +165,7 @@ def fix_leg_sides(path: str) -> bool:
                     prefix = f"{kind}_{side}_{joint}_"
                     if column.startswith(prefix):
                         renames[column] = f"{kind}_{other}_{joint}_" + column[len(prefix):]
-    df = df.rename(columns=renames)
+    df = order_skeleton_columns(df.rename(columns=renames))
     assert leg_side_agreement(df) > 0
     df.to_pickle(path)
     print(f"{path}: leg sides were mirrored ({agreement:+.2f}), swapped {len(renames)} columns")

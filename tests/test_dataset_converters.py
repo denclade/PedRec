@@ -253,3 +253,28 @@ def test_amass(tmp_path, amass_layout):
     sequences = PoseSequenceDataset(str(root / "amass_train_seq.pkl"), train=True)
     features, target, mask = sequences[len(sequences) - 1]
     assert features.shape[1:] == (26, 6) and mask.sum() == 26  # all joints supported
+
+
+def test_skeleton_columns_are_read_by_name_not_position(tmp_path):
+    """The first --fix-leg-sides only renamed the leg columns in place: the arrays must follow the names."""
+    import pandas as pd
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINTS
+    from pedrec.tools.datasets.convert_fit3d import fix_leg_sides
+    from pedrec.utils.pedrec_dataset_helper import get_filter_skeleton2d
+    columns = {}
+    for joint in SKELETON_PEDREC_JOINTS:
+        for value in ("x", "y", "score", "visible", "supported"):
+            columns[f"skeleton2d_{joint.name}_{value}"] = [float(joint.value)] * 2
+        for value, x in (("x", 1.0 if joint.name.startswith("left") else -1.0), ("y", 0.0), ("z", 0.0)):
+            columns[f"skeleton3d_{joint.name}_{value}"] = [x] * 2
+    df = pd.DataFrame(columns)
+    renamed = df.rename(columns={"skeleton2d_left_knee_x": "skeleton2d_right_knee_x",
+                                 "skeleton2d_right_knee_x": "skeleton2d_left_knee_x"})
+    skeleton = renamed[get_filter_skeleton2d(renamed)].to_numpy().reshape(2, 26, 5)
+    assert skeleton[0, SKELETON_PEDREC_JOINTS[13].value, 0] == 14  # left_knee x now holds the right knee value
+    assert skeleton[0, SKELETON_PEDREC_JOINTS[13].value, 1] == 13
+    path = str(tmp_path / "fit3d_train_pedrec.pkl")
+    renamed.to_pickle(path)
+    assert fix_leg_sides(path)  # consistent sides, but the columns are put into joint order
+    assert get_filter_skeleton2d(pd.read_pickle(path)) == [c for c in pd.read_pickle(path) if c.startswith("skeleton2d")]
+    assert not fix_leg_sides(path)
