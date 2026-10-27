@@ -51,6 +51,12 @@ def get_annotations_from_pedrec_df(df_path: str,
     filters = get_valid_filter(df)
     if action_filter is not None:
         filters = filters & get_filter_actions(df, action_filter)
+    subjects_include = getattr(cfg, "subjects_include", None)  # also called with other dataset configs
+    subjects_exclude = getattr(cfg, "subjects_exclude", None)
+    if subjects_include is not None:
+        filters = filters & df["subject_id"].astype(str).isin(subjects_include)
+    if subjects_exclude is not None:
+        filters = filters & ~df["subject_id"].astype(str).isin(subjects_exclude)
 
     if is_h36m:
         filter_s11 = ~((df['subject_id'] == "S11") & (df['img_dir'].str.contains("Directions\\.")))

@@ -17,6 +17,7 @@ from pedrec.models.constants.dataset_constants import DatasetType
 from pedrec.models.experiments.dataset_description import DatasetDescription
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.validation_set_model import ValidationSet
+from pedrec.networks.net_pedrec.pedrec_convention_adapter import get_convention_index
 from pedrec.training.experiments.experiment_train_helper import get_subsampled_dataset
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
         coco_train = CocoDataset(experiment_description.experiment_paths.coco_dir, DatasetType.TRAIN,
                                  experiment_description.coco_train_dataset_cfg,
                                  experiment_description.net_cfg.model.input_size, trans)
+        coco_train.convention = get_convention_index("coco")
         coco_full_length = len(coco_train)
         coco_train = get_subsampled_dataset(coco_train, experiment_description.coco_train_subsampling)
         train_sets.append(coco_train)
@@ -56,6 +58,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
         tud_train = TudDataset(experiment_description.experiment_paths.tud_dir, DatasetType.TRAIN,
                                experiment_description.tud_train_dataset_cfg,
                                experiment_description.net_cfg.model.input_size, trans)
+        tud_train.convention = get_convention_index("tud")
         tud_full_length = len(tud_train)
         tud_train = get_subsampled_dataset(tud_train, experiment_description.tud_train_subsampling)
         train_sets.append(tud_train)
@@ -93,6 +96,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                                    experiment_description.experiment_paths.h36m_train_filename,
                                    DatasetType.TRAIN, experiment_description.h36m_train_dataset_cfg,
                                    experiment_description.net_cfg.model.input_size, trans)
+        h36m_train.convention = get_convention_index("h36m")
         train_sets.append(h36m_train)
         train_set_names.append("h36m")
         experiment_description._train_sets.append(
@@ -108,6 +112,7 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
                 continue
             dataset = PedRecDataset(os.path.dirname(path), os.path.basename(path), DatasetType.TRAIN,
                                     get_extra_3d_dataset_cfg(), experiment_description.net_cfg.model.input_size, trans)
+            dataset.convention = get_convention_index(extra.name)
             train_sets.append(dataset)
             train_set_names.append(extra.name)
             experiment_description._train_sets.append(
@@ -194,6 +199,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                experiment_description.coco_val_dataset_cfg,
                                experiment_description.net_cfg.model.input_size,
                                trans)
+        coco_val.convention = get_convention_index("coco")
         coco_val_full_length = len(coco_val)
         coco_val = get_subsampled_dataset(coco_val, experiment_description.coco_val_subsampling)
         coco_loader = get_validation_loader(experiment_description, coco_val)
@@ -212,6 +218,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                experiment_description.tud_val_dataset_cfg,
                                experiment_description.net_cfg.model.input_size,
                                trans)
+        tud_val.convention = get_convention_index("tud")
         tud_val_full_length = len(tud_val)
         tud_val = get_subsampled_dataset(tud_val, experiment_description.tud_val_subsampling)
         tud_loader = get_validation_loader(experiment_description, tud_val)
@@ -249,6 +256,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
                                  experiment_description.experiment_paths.h36m_val_filename,
                                  DatasetType.VALIDATE, experiment_description.h36m_val_dataset_cfg,
                                  experiment_description.net_cfg.model.input_size, trans)
+        h36m_val.convention = get_convention_index("h36m")
         h36m_loader = get_validation_loader(experiment_description, h36m_val)
         validation_sets.append(ValidationSet(name="H36M", loader=h36m_loader,
                                              val_set_cfg=experiment_description.h36m_val_dataset_cfg,
@@ -272,6 +280,7 @@ def get_validation_sets(experiment_description: ExperimentDescription, trans) ->
             if len(dataset) == 0:
                 logger.warning(f"Additional 3D dataset {extra.title}: validation set {path} is empty, skipped")
                 continue
+            dataset.convention = get_convention_index(extra.name)
             loader = get_validation_loader(experiment_description, dataset)
             validation_sets.append(ValidationSet(name=extra.title, loader=loader, val_set_cfg=val_cfg,
                                                  validate_2D=True, validate_3D=experiment_description.validate_3d_h36m,

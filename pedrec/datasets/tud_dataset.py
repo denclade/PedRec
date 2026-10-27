@@ -50,6 +50,7 @@ class TudDataset(Dataset):
         self.input_size = input_size
         self.dataset_path = dataset_path
         self.transform = transform
+        self.convention = -1  # joint convention (pedrec_convention_adapter.CONVENTIONS), -1 = canonical (SIM)
 
         self.annotations = []
         if mode == DatasetType.TRAIN:
@@ -121,6 +122,7 @@ class TudDataset(Dataset):
             "trans_inv": trans_inv.astype(np.float32),
             "img_path": img_path,
             "idx": index,
+            "convention": self.convention,
             "img_size": np.array([img.shape[1], img.shape[0]], dtype=np.float32)
         }
 

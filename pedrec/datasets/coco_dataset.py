@@ -49,6 +49,7 @@ class CocoDataset(Dataset):
         coco_classes = [cat['name'] for cat in self.coco.loadCats(self.coco.getCatIds())]
 
         self.transform = transform
+        self.convention = -1  # joint convention (pedrec_convention_adapter.CONVENTIONS), -1 = canonical (SIM)
         self.classes = ['__background__'] + coco_classes
         self.num_classes = len(self.classes)
         self.num_non_humans = 0
@@ -279,6 +280,7 @@ class CocoDataset(Dataset):
             "trans_inv": trans_inv.astype(np.float32),
             "img_path": img_path,
             "idx": index,
+            "convention": self.convention,
             "img_size": annotations["img_size"],
             # "coco_id": annotations["coco_id"]
         }

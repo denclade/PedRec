@@ -101,15 +101,19 @@ def get_experiment_description(stage: PedRecTrainingStage, experiment_paths, bat
 
 
 def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, device: torch.device,
-              init_weights_path: str = None) -> PedRecNetMTLWrapper:
+              init_weights_path: str = None, use_convention_adapter: bool = None) -> PedRecNetMTLWrapper:
     pretrained = init_weights_path is None and stage.init_from == IMAGENET_INIT
     net = PedRecNet(description.net_cfg, pretrained_backbone=pretrained)
     net.init_weights()
     loss_head = PedRecNetLossHead(device,
                                   use_p3d_loss=stage.use_p3d_loss,
                                   use_orientation_loss=stage.use_orientation_loss,
-                                  use_conf_loss=stage.use_conf_loss)
+                                  use_conf_loss=stage.use_conf_loss,
+                                  use_convention_adapter=stage.use_convention_adapter
+                                  if use_convention_adapter is None else use_convention_adapter)
     net = PedRecNetMTLWrapper(net, loss_head)
+    description.initialization_notes += (f". Joint convention adapter: "
+                                         f"{'on' if loss_head.convention_adapter is not None else 'off'}")
 
     paths = description.experiment_paths
     if init_weights_path is not None:
@@ -266,6 +270,9 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         log_vars = net.loss_head.log_vars.detach().cpu().tolist()
         logger.info("MTL log variances (2D, 3D, orientation, conf): " + ", ".join(f"{v:.2f}" for v in log_vars) +
                     f" (bounds [{net.loss_head.LOG_VAR_MIN}, {net.loss_head.LOG_VAR_MAX}])")
+        if net.loss_head.convention_adapter is not None:
+            for line in net.loss_head.convention_adapter.describe():
+                logger.info(f"Joint convention {line}")
         if stage_state.best.update(results.validation_results, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "
@@ -314,7 +321,10 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
                 f"effective batch size {description.batch_size * options.accumulate}")
 
     # Append the MTL weighting parameters AFTER the LR range test.
-    params.append({'params': [net.loss_head.log_vars], 'weight_decay': 1e-2})
+    loss_head_params = [net.loss_head.log_vars]
+    if net.loss_head.convention_adapter is not None:
+        loss_head_params += list(net.loss_head.convention_adapter.parameters())
+    params.append({'params': loss_head_params, 'weight_decay': 1e-2})
 
     ema = TrainStepper.create_ema(net, options)
     if stage_state.loaded is not None:
@@ -403,6 +413,9 @@ def parse_args(argv=None):
                         help="Override the stage dataset weights (relative sampling probability per dataset, "
                              "independent of its size), e.g. sim=0.4,h36m=0.1; unlisted datasets keep the stage "
                              "default. 'size' samples proportional to the dataset sizes.")
+    parser.add_argument("--no-convention-adapter", action="store_true",
+                        help="Train all datasets on the canonical (SIM) skeleton instead of mapping the predictions "
+                             "to the joint convention of each dataset (hips, shoulders, head, hand / foot ends).")
     parser.add_argument("--no-extra-3d", action="store_true",
                         help="Ignore the converted additional 3D datasets (MPI-INF-3DHP, Fit3D, AIST++), which are "
                              "otherwise used for training and validation as soon as they exist.")
@@ -450,7 +463,8 @@ def main(argv=None):
     init_experiment(description.seed)
     device = get_device(use_gpu=not args.cpu)
     logger.info(f"Training stage '{stage.name}': {stage.description}")
-    net = build_net(stage, description, device, init_weights_path=args.init_weights)
+    net = build_net(stage, description, device, init_weights_path=args.init_weights,
+                    use_convention_adapter=False if args.no_convention_adapter else None)
     train_stage(stage, description, net, device,
                 cycle_num=args.cycle,
                 epochs_round_1=args.epochs_round_1,

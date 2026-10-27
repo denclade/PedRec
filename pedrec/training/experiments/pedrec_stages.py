@@ -63,6 +63,10 @@ class PedRecTrainingStage:
     sim_val_subsampling: int = 10
     batch_size: int = 64
 
+    # map the predictions to the joint convention of each dataset for the pose losses / validation
+    # (pedrec_convention_adapter, training only); off = all datasets are trained on the canonical skeleton
+    use_convention_adapter: bool = True
+
     # dataset balancing (name, weight); empty = sampling proportional to the dataset sizes
     dataset_weights: Tuple[Tuple[str, float], ...] = DATASET_WEIGHTS_3D
 

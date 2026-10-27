@@ -29,7 +29,8 @@ class SyntheticPoseDataset(Dataset):
             self.items.append((torch.randn(3, 256, 192), {
                 "skeleton": skeleton, "skeleton_3d": skeleton_3d, "orientation": orientation,
                 "center": np.array([96, 128], dtype=np.float32), "scale": np.array([192, 256], dtype=np.float32),
-                "rotation": 0.0, "env_position_2d": np.zeros(3, dtype=np.float32)}))
+                "rotation": 0.0, "env_position_2d": np.zeros(3, dtype=np.float32),
+                "convention": -1 if i % 2 == 0 else 2}))  # SIM / Human3.6m convention
 
     def __len__(self):
         return len(self.items)

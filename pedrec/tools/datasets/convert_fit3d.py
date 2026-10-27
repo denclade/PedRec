@@ -30,16 +30,19 @@ from pedrec.tools.datasets.pedrec_df_writer import (J, FrameExtractor, PedRecDfW
                                                     image_scale,
                                                     to_mm, to_pedrec_joints)
 
-# Human3.6m order: 0 pelvis, 1 r_hip, 2 r_knee, 3 r_ankle, 4 l_hip, 5 l_knee, 6 l_ankle, 7 spine, 8 thorax, 9 neck /
-# nose, 10 head top, 11 l_shoulder, 12 l_elbow, 13 l_wrist, 14 r_shoulder, 15 r_elbow, 16 r_wrist;
-# 17 / 18 right foot, 19 / 20 left foot, 21 / 22 left hand, 23 / 24 right hand
+# Human3.6m like order, but the legs start with the LEFT side (unlike Human3.6m; checked on the data: with 1-3 as the
+# right leg the hips / knees / ankles are mirrored against the shoulders in 2D and 3D): 0 pelvis, 1 l_hip, 2 l_knee,
+# 3 l_ankle, 4 r_hip, 5 r_knee, 6 r_ankle, 7 spine, 8 thorax, 9 neck / nose, 10 head top, 11 l_shoulder, 12 l_elbow,
+# 13 l_wrist, 14 r_shoulder, 15 r_elbow, 16 r_wrist; 17 / 18 left foot, 19 / 20 right foot, 21 / 22 left hand,
+# 23 / 24 right hand
 MAPPING_25 = {
-    J.hip_center: 0, J.right_hip: 1, J.right_knee: 2, J.right_ankle: 3, J.left_hip: 4, J.left_knee: 5,
-    J.left_ankle: 6, J.spine_center: 7, J.neck: 8, J.head_lower: 9, J.head_upper: 10, J.left_shoulder: 11,
+    J.hip_center: 0, J.left_hip: 1, J.left_knee: 2, J.left_ankle: 3, J.right_hip: 4, J.right_knee: 5,
+    J.right_ankle: 6, J.spine_center: 7, J.neck: 8, J.head_lower: 9, J.head_upper: 10, J.left_shoulder: 11,
     J.left_elbow: 12, J.left_wrist: 13, J.right_shoulder: 14, J.right_elbow: 15, J.right_wrist: 16,
-    J.right_foot_end: farther_from(3, 17, 18), J.left_foot_end: farther_from(6, 19, 20),
+    J.left_foot_end: farther_from(3, 17, 18), J.right_foot_end: farther_from(6, 19, 20),
     J.left_hand_end: farther_from(13, 21, 22), J.right_hand_end: farther_from(16, 23, 24),
 }
+LEG_JOINTS = ["hip", "knee", "ankle", "foot_end"]
 FPS = 50.0
 
 
@@ -125,6 +128,43 @@ def convert(root: str, output_dir: str, image_step: int, val_subjects: List[str]
                     os.path.join(output_dir, f"{prefix}_{split}_seq.pkl"))
 
 
+def leg_side_agreement(df) -> float:
+    """
+    Mean sign of (left - right hip) . (left - right shoulder) in 3D: ~+1 for consistent sides, ~-1 for mirrored legs.
+    """
+    def joint(name):
+        return df[[f"skeleton3d_{name}_{axis}" for axis in "xyz"]].to_numpy(np.float64)
+    hips = joint("left_hip") - joint("right_hip")
+    shoulders = joint("left_shoulder") - joint("right_shoulder")
+    return float(np.mean(np.sign(np.sum(hips * shoulders, axis=1))))
+
+
+def fix_leg_sides(path: str) -> bool:
+    """
+    Repairs a dataframe written with the former mapping (legs mirrored) by swapping the left / right leg columns in 2D
+    and 3D. Only applied if the legs are mirrored, so running it twice is safe. :return: True if the file was changed
+    """
+    import pandas as pd
+    df = pd.read_pickle(path)
+    agreement = leg_side_agreement(df)
+    if agreement > 0:
+        print(f"{path}: leg sides consistent ({agreement:+.2f}), unchanged")
+        return False
+    renames = {}
+    for column in df.columns:
+        for joint in LEG_JOINTS:
+            for side, other in (("left", "right"), ("right", "left")):
+                for kind in ("skeleton2d", "skeleton3d"):
+                    prefix = f"{kind}_{side}_{joint}_"
+                    if column.startswith(prefix):
+                        renames[column] = f"{kind}_{other}_{joint}_" + column[len(prefix):]
+    df = df.rename(columns=renames)
+    assert leg_side_agreement(df) > 0
+    df.to_pickle(path)
+    print(f"{path}: leg sides were mirrored ({agreement:+.2f}), swapped {len(renames)} columns")
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", default=os.path.join(get_data_root(), "datasets", "Fit3D"))
@@ -134,7 +174,18 @@ def main(argv=None):
     parser.add_argument("--name", default="Fit3D", help="Dataset name (Fit3D, HumanSC3D, CHI3D).")
     parser.add_argument("--max-image-size", type=int, default=0, help="Downscale the images (longer side), 0 = off.")
     parser.add_argument("--workers", type=int, default=None, help="Parallel video decoders (default: CPUs, max 8).")
+    parser.add_argument("--fix-leg-sides", action="store_true",
+                        help="Only repair existing dataframes (<name>_{train,val}_{pedrec,seq}.pkl in --output-dir) "
+                             "converted with the former mapping (left / right legs mirrored), no conversion.")
     args = parser.parse_args(argv)
+    if args.fix_leg_sides:
+        prefix = args.name.lower()
+        for split in ("train", "val"):
+            for kind in ("pedrec", "seq"):
+                path = os.path.join(args.output_dir or args.root, f"{prefix}_{split}_{kind}.pkl")
+                if os.path.isfile(path):
+                    fix_leg_sides(path)
+        return
     convert(args.root, args.output_dir or args.root, args.image_step, args.val_subjects, args.name,
             args.max_image_size, args.workers)
 

@@ -143,3 +143,90 @@ def test_crop_normalize_roundtrip():
     # UDP: the bb center maps to the center pixel of the crop
     center = np.array([[500.0, 400.0, 1.0]]) @ get_affine_transforms(bb[:2], np.array([150, 200]), 0, input_size)[0].T
     assert np.allclose(center, [[95.5, 127.5]])
+
+
+def _random_adapter():
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import ConventionAdapter
+    torch.manual_seed(0)
+    adapter = ConventionAdapter()
+    with torch.no_grad():
+        adapter.offsets.normal_(0, 0.1)
+    return adapter
+
+
+def test_convention_adapter_identity_and_fixed_joints():
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import ConventionAdapter, NO_CONVENTION
+    pose_2d, pose_3d = torch.rand(4, 26, 3), torch.rand(4, 26, 4)
+    adapted_2d, adapted_3d = ConventionAdapter()(pose_2d, pose_3d, torch.tensor([0, 1, 2, 3]))
+    assert torch.allclose(adapted_2d, pose_2d) and torch.allclose(adapted_3d, pose_3d)  # starts as identity
+    adapter = _random_adapter()
+    assert torch.allclose(adapter.matrices().sum(dim=-1), torch.ones(len(adapter.conventions), 26))
+    adapted_2d, adapted_3d = adapter(pose_2d, pose_3d, torch.tensor([NO_CONVENTION, 2, 2, 5]))
+    assert torch.allclose(adapted_2d[0], pose_2d[0]) and torch.allclose(adapted_3d[0], pose_3d[0])  # SIM
+    for joint in (J.left_knee, J.right_ankle, J.left_elbow, J.right_wrist):  # anatomically defined: fixed
+        assert torch.allclose(adapted_2d[:, joint.value], pose_2d[:, joint.value])
+    assert not torch.allclose(adapted_2d[1, J.left_hip.value], pose_2d[1, J.left_hip.value])
+    root = J.hip_center.value
+    assert torch.allclose(adapted_3d[:, root, :3], pose_3d[:, root, :3], atol=1e-6)  # root kept
+    assert torch.equal(adapted_3d[..., 3], pose_3d[..., 3]) and torch.equal(adapted_2d[..., 2], pose_2d[..., 2])
+
+
+def test_convention_adapter_is_rotation_and_flip_equivariant():
+    from pedrec.utils.skeleton_helper_3d import flip_lr_joints_3d
+    adapter = _random_adapter()
+    pose_3d = torch.rand(1, 26, 3)
+    convention = torch.tensor([2])
+    angle = 0.7
+    rotation = torch.tensor([[math.cos(angle), 0, math.sin(angle)], [0, 1, 0], [-math.sin(angle), 0, math.cos(angle)]])
+    _, adapted = adapter(pose_3d[..., :2], pose_3d, convention)
+    _, adapted_rotated = adapter(pose_3d[..., :2], pose_3d @ rotation.T, convention)
+    assert torch.allclose(adapted_rotated, adapted @ rotation.T, atol=1e-5)
+    flipped = torch.from_numpy(flip_lr_joints_3d(pose_3d[0].numpy().copy()))[None]
+    _, adapted_flipped = adapter(flipped[..., :2], flipped, convention)
+    expected = torch.from_numpy(flip_lr_joints_3d(adapted[0].detach().numpy().copy()))[None]
+    assert torch.allclose(adapted_flipped, expected, atol=1e-5)
+
+
+def test_convention_adapter_learns_a_hip_convention():
+    """Targets with the hips moved down by 15 % of the torso: only the adapter is trained and recovers the offset."""
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import ConventionAdapter, get_convention_index
+    torch.manual_seed(0)
+    pose = torch.rand(256, 26, 3)
+    neck, hc = pose[:, J.neck.value], pose[:, J.hip_center.value]
+    target = pose.clone()
+    for hip in (J.left_hip, J.right_hip, J.hip_center):
+        target[:, hip.value] -= 0.15 * (neck - hc)
+    target -= target[:, J.hip_center.value:J.hip_center.value + 1] - hc[:, None]
+    adapter = ConventionAdapter(reg_weight=0)
+    optimizer = torch.optim.Adam(adapter.parameters(), lr=0.01)
+    convention = torch.full((256,), get_convention_index("h36m"))
+    errors = []
+    for _ in range(300):
+        _, adapted = adapter(pose[..., :2], pose, convention)
+        error = (adapted - target).abs().mean()
+        optimizer.zero_grad()
+        error.backward()
+        optimizer.step()
+        errors.append(error.item())
+    assert errors[-1] < 0.1 * errors[0]
+    assert "h36m: " in adapter.describe()[get_convention_index("h36m")]
+
+
+def test_loss_head_without_adapter_ignores_conventions():
+    head = PedRecNetLossHead(torch.device("cpu"))
+    assert head.convention_adapter is None
+    outputs = (torch.rand(2, 26, 3), torch.rand(2, 26, 4))
+    assert head.adapt_outputs(outputs, {"convention": torch.tensor([2, 3])}) is outputs
+
+
+def test_extract_network_from_checkpoint_with_convention_adapter(tmp_path, net):
+    from pedrec.tools.networks.mtl_net_extractor import mtl_to_net
+    path, output = str(tmp_path / "mtl.pth"), str(tmp_path / "net.pth")
+    torch.save(PedRecNetMTLWrapper(net, PedRecNetLossHead(torch.device("cpu"), use_convention_adapter=True))
+               .state_dict(), path)
+    mtl_to_net(PedRecNetMTLWrapper(PedRecNet(PedRecNetConfig()), PedRecNetLossHead(torch.device("cpu"))), path, output)
+    loaded = load_pedrec_net(path)  # inference loads only the network
+    assert torch.equal(next(loaded.parameters()), next(net.parameters()))
+    assert set(torch.load(output, weights_only=True)) == set(net.state_dict())

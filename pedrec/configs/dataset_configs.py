@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Optional, Tuple
 
 from pedrec.models.constants.sample_method import SAMPLE_METHOD
 from pedrec.models.data_structures import ImageSize
@@ -67,6 +68,8 @@ class PedRecDatasetConfig:
     half_body_prob: float = 0.3  # training: probability to crop to the upper or lower body
     random_erasing_prob: float = 0.3  # training: probability to erase a random rectangle (occlusion)
     color_jitter: float = 0.2  # training: max relative brightness / contrast / saturation change
+    subjects_include: Optional[Tuple[str, ...]] = None  # only these subject ids (None = all)
+    subjects_exclude: Optional[Tuple[str, ...]] = None  # without these subject ids
 
 
 def get_coco_dataset_cfg_default() -> CocoDatasetConfig:
@@ -106,9 +109,28 @@ def get_video_action_dataset_cfg_default() -> VideoActionDatasetConfig:
         subsampling_strategy=SAMPLE_METHOD.SYSTEMATIC
     )
 
+# SIM validation: avatars of rt_validate_3d.pkl which are held out of the PedRecNet training. There are only 15 SIM
+# avatars, 4 of them in rt_rom_01b.pkl; these 4 of the other 11 cover both genders, skin colors 0 / 1 / 5, sizes 1 / 2,
+# BMI 0 - 3 and ages 1 / 2. Before, the complete rt_validate_3d.pkl was trained and validated (SIM results = training
+# data). SIM-C01 uses the same avatars (not part of the PedRecNet training).
+SIM_VAL_HOLDOUT_SUBJECTS: Tuple[str, ...] = (
+    "2be5712e-adc4-4d3e-913f-735c650e2177",
+    "3bc845aa-b5c8-4d09-a789-45c7e842e8ef",
+    "7a6c0822-e163-4349-ae3b-4d17ec21087c",
+    "a780b53f-6cbf-4131-9005-ba245d52c811",
+)
+
+
+def get_sim_train_dataset_cfg_default() -> PedRecDatasetConfig:
+    cfg = get_sim_dataset_cfg_default()
+    cfg.subjects_exclude = SIM_VAL_HOLDOUT_SUBJECTS
+    return cfg
+
+
 def get_sim_val_dataset_cfg_default() -> PedRecDatasetConfig:
     cfg = get_sim_dataset_cfg_default()
-    cfg.subsample = 10
+    cfg.subsample = 4
+    cfg.subjects_include = SIM_VAL_HOLDOUT_SUBJECTS
     return cfg
 
 

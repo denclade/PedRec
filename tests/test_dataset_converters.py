@@ -128,8 +128,45 @@ def test_fit3d(tmp_path):
     convert(str(root), str(root), image_step=5, val_subjects=[])
     df = _check_outputs(str(root / "fit3d_train_pedrec.pkl"), str(root / "fit3d_train_seq.pkl"), 3)
     # hip center (pelvis) is the origin of the 3D pose, 2D matches the projection
-    x2d = df["skeleton2d_right_hip_x"].to_numpy()
+    x2d = df["skeleton2d_left_hip_x"].to_numpy()  # Fit3D: joint 1 is the left hip
     assert np.allclose(x2d, _project(joints_cam)[[0, 5, 10], 1, 0], atol=0.5)
+
+
+def test_pedrec_dataset_subject_filter(tmp_path):
+    """Held out subjects (SIM validation split) are excluded from training and the only ones validated."""
+    test_fit3d(tmp_path)
+    root = str(tmp_path / "fit3d")
+
+    def length(**subjects):
+        cfg = get_h36m_dataset_cfg_default()
+        cfg.subsample = 1
+        for key, value in subjects.items():
+            setattr(cfg, key, value)
+        return len(PedRecDataset(root, "fit3d_train_pedrec.pkl", DatasetType.VALIDATE, cfg, ImageSize(192, 256), None))
+    assert length() == 3
+    assert length(subjects_include=("s03",)) == 3 and length(subjects_include=("s09",)) == 0
+    assert length(subjects_exclude=("s03",)) == 0
+    from pedrec.configs.dataset_configs import get_sim_train_dataset_cfg_default, get_sim_val_dataset_cfg_default
+    assert get_sim_train_dataset_cfg_default().subjects_exclude == get_sim_val_dataset_cfg_default().subjects_include
+
+
+def test_fit3d_fix_leg_sides(tmp_path):
+    import pandas as pd
+    from pedrec.tools.datasets.convert_fit3d import fix_leg_sides, leg_side_agreement
+    columns = {}
+    for kind in ("skeleton2d", "skeleton3d"):
+        for side, x in (("left", 1.0), ("right", -1.0)):
+            for joint in ("shoulder", "hip", "knee", "ankle", "foot_end"):
+                mirrored = -x if joint != "shoulder" else x
+                for axis, value in (("x", mirrored), ("y", 0.0), ("z", 0.0), ("visible", 1.0)):
+                    columns[f"{kind}_{side}_{joint}_{axis}"] = [value] * 3
+    path = str(tmp_path / "fit3d_train_pedrec.pkl")
+    pd.DataFrame(columns).to_pickle(path)
+    assert leg_side_agreement(pd.read_pickle(path)) == -1
+    assert fix_leg_sides(path)
+    df = pd.read_pickle(path)
+    assert leg_side_agreement(df) == 1 and (df["skeleton2d_left_knee_x"] == 1.0).all()
+    assert not fix_leg_sides(path)  # idempotent
 
 
 def test_aistpp(tmp_path):

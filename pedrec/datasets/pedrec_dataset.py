@@ -34,6 +34,7 @@ class PedRecDataset(Dataset):
         self.dataset_hdf5_path = os.path.join(self.dataset_root_path, dataset_filename)
         self.orientation_dummy = np.array([[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], dtype=np.float32)
         self.transform = transform
+        self.convention = -1  # joint convention (pedrec_convention_adapter.CONVENTIONS), -1 = canonical (SIM)
         self.index_mappings, self.annotations, self.info = get_annotations_from_pedrec_df(os.path.join(dataset_root_path, dataset_filename),
                                                                                           cfg,
                                                                                           self.model_input_size,
@@ -168,6 +169,7 @@ class PedRecDataset(Dataset):
             "env_position_2d": env_position_2d,
             "trans_inv": trans_inv.astype(np.float32),
             "idx": index,
+            "convention": self.convention,
             "img_size": img_size
         }
 

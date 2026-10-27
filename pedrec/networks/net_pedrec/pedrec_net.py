@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.networks.net_pedrec.pedrec_backbone import PedRecBackbone, PedRecNeck
+from pedrec.networks.net_pedrec.pedrec_convention_adapter import ConventionAdapter
 from pedrec.networks.net_pedrec.pedrec_orientation_head_shared import PedRecOrientationsHead
 from pedrec.networks.net_pedrec.pedrec_pose_conf_head_heatmap import PedRecPoseConfHeadHeatmap
 from pedrec.networks.net_pedrec.pedrec_pose_heads import PedRecPose2DHead, PedRecPose3DHead
@@ -68,12 +69,16 @@ class PedRecNetLossHead(nn.Module):
     The optimum is s_i = log(2 c_i L_i). The normalized L1 pose losses reach ~0.005 (3D: 15 mm / 3000 mm), so the lower
     bound has to be well below log(0.005) = -5.3: at the bound the weighting degenerates to equal, fixed weights and
     the 3D pose loses its relative weight against the 2D pose.
+
+    With ``use_convention_adapter`` the 2D / 3D poses are mapped to the joint convention of each sample's dataset
+    (targets["convention"], see pedrec_convention_adapter) before the pose losses; its regularization is added
+    unweighted.
     """
     LOG_VAR_MIN = -8.0
     LOG_VAR_MAX = 4.0
 
     def __init__(self, device, use_p3d_loss: bool = True, use_orientation_loss: bool = True,
-                 use_conf_loss: bool = True):
+                 use_conf_loss: bool = True, use_convention_adapter: bool = False, num_joints: int = 26):
         super(PedRecNetLossHead, self).__init__()
         self.pose_loss_2d = Pose2DL1Loss()
         self.pose_loss_3d = Pose3DL1Loss()
@@ -84,6 +89,14 @@ class PedRecNetLossHead(nn.Module):
         self.use_p3d_loss = use_p3d_loss
         self.use_orientation_loss = use_orientation_loss
         self.use_conf_loss = use_conf_loss
+        self.convention_adapter = ConventionAdapter(num_joints) if use_convention_adapter else None
+
+    def adapt_outputs(self, outputs, targets):
+        """Outputs with the 2D / 3D poses in the joint conventions of the samples (unchanged without adapter)."""
+        if self.convention_adapter is None or "convention" not in targets:
+            return outputs
+        pose_2d, pose_3d = self.convention_adapter(outputs[0], outputs[1], targets["convention"])
+        return (pose_2d, pose_3d) + tuple(outputs[2:])
 
     def reset_log_vars(self):
         """
@@ -105,7 +118,8 @@ class PedRecNetLossHead(nn.Module):
 
     def forward(self, outputs, targets):
         log_vars = self.log_vars.clamp(self.LOG_VAR_MIN, self.LOG_VAR_MAX)
-        loss = 0
+        outputs = self.adapt_outputs(outputs, targets)
+        loss = 0 if self.convention_adapter is None else self.convention_adapter.regularization()
         for i, task_loss in enumerate(self.task_losses(outputs, targets)):
             if task_loss is None or torch.isnan(task_loss):
                 continue

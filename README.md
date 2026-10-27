@@ -262,6 +262,21 @@ the wild, Human3.6m limited because of its 5 subjects in one studio. Missing dat
 renormalized; the protocol lists the used shares. `--dataset-weights sim=0.4,h36m=0.1` overrides single groups,
 `--dataset-weights size` samples proportional to the dataset sizes.
 
+Joint conventions: the datasets place some joints differently (hips of Human3.6m / MPI-INF-3DHP / Fit3D ~10 cm higher
+and ~5 cm wider than in SIM, narrower shoulders, lower head top, AIST++ neck derived from the shoulders). PedRecNet
+predicts one canonical skeleton in the SIM convention (as SIM-C01 for the lifter / action recognition); during
+training a per dataset adapter (`pedrec/networks/net_pedrec/pedrec_convention_adapter.py`) maps the prediction to the
+dataset convention before the pose losses, as offsets built from bone vectors of the neighbouring joints (they rotate
+and scale with the body). Knees, ankles, elbows and wrists stay fixed, so it cannot learn body proportions. Validation
+compares in the dataset convention; the learned offsets are logged every epoch. The adapter is part of the loss head
+only (no effect on inference or the extracted network); `--no-convention-adapter` trains every dataset on the
+canonical skeleton.
+
+SIM validation: 4 of the 15 SIM avatars (`SIM_VAL_HOLDOUT_SUBJECTS` in `pedrec/configs/dataset_configs.py`, none of
+them in the ROM set) are held out of the training and form the SIM validation set (rt_validate_3d.pkl, ~2.6k frames).
+Until 10/2026 the complete rt_validate_3d.pkl was trained and validated, so older SIM validation results (also v1) are
+training set results and not comparable.
+
 Training stability options (PedRecNet and action recognition):
 
 | Option | Default | Effect |

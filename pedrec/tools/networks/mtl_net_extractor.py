@@ -23,7 +23,9 @@ from pedrec.utils.torch_utils.torch_helper import get_device
 
 
 def mtl_to_net(mtl_wrapper: torch.nn.Module, mtl_path: str, output_path: str):
-    mtl_wrapper.load_state_dict(load_state_dict_file(mtl_path))
+    # only the network: the loss head (MTL weights, convention adapter) is training only and may differ
+    state = load_state_dict_file(mtl_path)
+    mtl_wrapper.model.load_state_dict({k[len("model."):]: v for k, v in state.items() if k.startswith("model.")})
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     torch.save(mtl_wrapper.model.state_dict(), output_path)
     print(f"Wrote {output_path}")
