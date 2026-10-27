@@ -23,19 +23,27 @@ NUMEXPR_MAX_THREADS = "16"
 QT_API = "pyqt6"
 
 # ------------------------------------------------------------------------------------------------------- setup
+# mise only creates .venv if the directory is missing; in the dev VM it is an (initially empty) mount on /persist.
+[tasks.venv]
+hide = true
+run = "uv venv --allow-existing .venv"
+
 [tasks.setup]
 description = "Install the requirements into .venv (Linux: PyTorch wheels with CUDA 13.0, RTX 20xx-50xx, driver >= 580)"
+depends = ["venv"]
 run = "uv pip install -r requirements-dev.txt"
 
 [tasks."setup:cu128"]
 description = "Install with PyTorch CUDA 12.8 wheels (driver >= 570, also needed on Windows for GPU support)"
+depends = ["venv"]
 run = [
     "uv pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cu128",
     "uv pip install -r requirements-dev.txt",
 ]
 
 [tasks."setup:cpu"]
-description = "Install with CPU-only PyTorch wheels"
+description = "Install with CPU-only PyTorch wheels (default in the dev VM without GPU passthrough)"
+depends = ["venv"]
 run = [
     "uv pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cpu",
     "uv pip install -r requirements-dev.txt",

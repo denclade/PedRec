@@ -122,3 +122,8 @@ mise.local.toml
 # generated evaluation / demo output
 coco_out*.json
 out/
+
+# MicroVM dev sandbox (nix run)
+.microvm-state/
+*-vm.sock
+result

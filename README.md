@@ -96,6 +96,20 @@ Data (datasets, models, demo videos) live below the data root, `./data` by defau
 PEDREC_DATA_DIR = "/mnt/storage/pedrec_data"
 ```
 
+## Dev VM (Nix)
+`flake.nix` defines an isolated MicroVM ([nix-dev-sandbox](https://github.com/denclade/nix-dev-sandbox)) with mise,
+Mesa / Xvfb for the Qt demo (`ssh -X` or `DISPLAY=:99`) and the system libraries the pip wheels need. The project is
+shared into the VM at `/workspaces/pedrec`, `.venv` lives on the VM's persistent image (separate from the host's).
+`$PEDREC_CONTI01_DIR` (default `/mnt/DataNVME/datasets/Conti01`, also read from `.env`) is mounted read-only at
+`data/datasets/Conti01`.
+
+```bash
+nix run                      # start the VM (CPU only), then ssh pedrec-vm
+mise install && mise run setup:cpu && mise run test
+```
+
+Training and GPU tests run on the host (`mise run ...` in the same checkout), the VM has no GPU access.
+
 ## Manual installation (without mise)
 - Python 3.12 or newer (3.14 tested), venv suggested
 - `pip install -r requirements.txt` (`requirements-dev.txt` for the tests)
