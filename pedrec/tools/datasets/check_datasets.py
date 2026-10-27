@@ -453,8 +453,8 @@ def run(data_root: Optional[str] = None, samples: int = 200, color: Optional[boo
     if not converted.get("mpi_inf_3dhp"):
         recommendations.append("Optional: MPI-INF-3DHP for outdoor scenes and unusual camera views")
     if any(converted.values()):
-        recommendations.append("With additional datasets balance the sampling, e.g. mise run train:pedrec "
-                               "--dataset-weights coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,aistpp=0.5")
+        recommendations.append("The additional datasets are balanced by the stage dataset weights "
+                               "(pedrec_stages.py, override with --dataset-weights, see the protocol for the shares)")
     total, used, free = shutil.disk_usage(datasets if os.path.isdir(datasets) else data_root if os.path.isdir(
         data_root) else ".")
     recommendations.append(f"Free disk space: {free / 1e9:.0f} GB")

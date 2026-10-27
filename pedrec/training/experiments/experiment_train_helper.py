@@ -89,6 +89,9 @@ def train(net: nn.Module, stepper: TrainStepper, train_loader: DataLoader, devic
             pbar.set_postfix(loss=f"{loss_value:.4f}")
             pbar.update()
     logger.info(f"Epoch steps: {stepper.stats.summary()}")
+    if stepper.stats.optimizer_steps > 0 and stepper.stats.clipped_steps > 0.5 * stepper.stats.optimizer_steps:
+        logger.warning("More than half of the optimizer steps were gradient clipped: the clipping threshold is below "
+                       "the typical gradient norm and acts as a learning rate reduction (use --grad-clip-rel).")
     return loss_total / max(finite_batches, 1), time.time() - start
 
 

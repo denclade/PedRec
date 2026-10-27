@@ -126,6 +126,8 @@ def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, de
                 f"or pass --init-weights.")
         logger.info(f"Initializing from predecessor stage checkpoint {predecessor}")
         initialize_weights_with_same_name_and_shape(net, predecessor)
+    # the MTL weights of the predecessor are adapted to its tasks, every stage starts with equal weights
+    net.loss_head.reset_log_vars()
     net.to(device)
 
     description.net_layer_names = [
@@ -261,6 +263,9 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
 
     def on_epoch_end(epoch, eval_net, results, stepper):
         name = f"round {round_idx + 1} epoch {epoch + 1}"
+        log_vars = net.loss_head.log_vars.detach().cpu().tolist()
+        logger.info("MTL log variances (2D, 3D, orientation, conf): " + ", ".join(f"{v:.2f}" for v in log_vars) +
+                    f" (bounds [{net.loss_head.LOG_VAR_MIN}, {net.loss_head.LOG_VAR_MAX}])")
         if stage_state.best.update(results.validation_results, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "
@@ -359,6 +364,16 @@ def train_stage(stage: PedRecTrainingStage, description: ExperimentDescription, 
     print(protocol)
 
 
+def get_dataset_weights(stage: PedRecTrainingStage, overrides: str = None):
+    """Stage default dataset weights with the --dataset-weights overrides; None = sampling by dataset size."""
+    if overrides is not None and overrides.strip() == "size":
+        return None
+    weights = dict(stage.dataset_weights)
+    if overrides:
+        weights.update({k.strip(): float(v) for k, v in (item.split("=") for item in overrides.split(","))})
+    return weights or None
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stage", default=DEFAULT_STAGE, choices=sorted(STAGES.keys()), metavar="STAGE",
@@ -385,8 +400,9 @@ def parse_args(argv=None):
     parser.add_argument("--skip-round-1", action="store_true",
                         help="Load the round 1 checkpoint (*_01.pth) instead of training round 1.")
     parser.add_argument("--dataset-weights", default=None,
-                        help="Balance the training datasets, e.g. coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,"
-                             "aistpp=0.5 (relative sampling probability of each dataset, independent of its size).")
+                        help="Override the stage dataset weights (relative sampling probability per dataset, "
+                             "independent of its size), e.g. sim=0.4,h36m=0.1; unlisted datasets keep the stage "
+                             "default. 'size' samples proportional to the dataset sizes.")
     parser.add_argument("--no-extra-3d", action="store_true",
                         help="Ignore the converted additional 3D datasets (MPI-INF-3DHP, Fit3D, AIST++), which are "
                              "otherwise used for training and validation as soon as they exist.")
@@ -396,7 +412,12 @@ def parse_args(argv=None):
     stability.add_argument("--amp", choices=["auto", "bf16", "fp16", "off"], default="auto",
                            help="Mixed precision (default auto: bf16 on GPUs that support it, e.g. RTX 30xx-50xx). "
                                 "'off' reproduces the original fp32 training.")
-    stability.add_argument("--grad-clip", type=float, default=10.0, help="Max gradient norm, 0 disables (default 10).")
+    stability.add_argument("--grad-clip", type=float, default=0.0,
+                           help="Absolute max gradient norm, 0 disables (default). The gradient norm scales with the "
+                                "MTL weights, so a fixed threshold ends up clipping every step.")
+    stability.add_argument("--grad-clip-rel", type=float, default=5.0,
+                           help="Max gradient norm as multiple of the running mean norm (clips spikes only), "
+                                "0 disables (default 5).")
     stability.add_argument("--accumulate", type=int, default=1,
                            help="Gradient accumulation steps, e.g. --batch-size 24 --accumulate 2 on 12 GB GPUs.")
     stability.add_argument("--ema-decay", type=float, default=0.9998,
@@ -420,9 +441,7 @@ def main(argv=None):
     experiment_paths = get_experiment_paths(args.data_dir)
     if args.output_dir is not None:
         experiment_paths.output_dir = args.output_dir
-    dataset_weights = None
-    if args.dataset_weights:
-        dataset_weights = {k.strip(): float(v) for k, v in (item.split("=") for item in args.dataset_weights.split(","))}
+    dataset_weights = get_dataset_weights(stage, args.dataset_weights)
     description = get_experiment_description(stage, experiment_paths,
                                              batch_size=args.batch_size or stage.batch_size,
                                              num_workers=args.num_workers,
@@ -439,7 +458,8 @@ def main(argv=None):
                 lr=args.lr,
                 force_lr_finder=args.lr_finder,
                 skip_round_1=args.skip_round_1,
-                options=TrainingOptions(amp=args.amp, grad_clip=args.grad_clip, accumulate=args.accumulate,
+                options=TrainingOptions(amp=args.amp, grad_clip=args.grad_clip,
+                                        grad_clip_rel=args.grad_clip_rel, accumulate=args.accumulate,
                                         ema_decay=args.ema_decay),
                 resume=args.resume)
 

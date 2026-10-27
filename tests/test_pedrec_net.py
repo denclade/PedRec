@@ -61,6 +61,19 @@ def test_kendall_weighting_formula():
     assert abs(head(None, None).item() - expected) < 1e-5
 
 
+def test_weighting_bounds_cover_small_pose_losses():
+    """The optimal log variance log(L) of a converged normalized pose loss (~0.005) must lie inside the bounds."""
+    head = PedRecNetLossHead(torch.device("cpu"), use_p3d_loss=False, use_orientation_loss=False,
+                             use_conf_loss=False)
+    with torch.no_grad():
+        head.log_vars.copy_(torch.tensor([math.log(0.005), 0.0, 0.0, 0.0]))
+    head.task_losses = lambda outputs, targets: [torch.tensor(0.005), None, None, None]
+    expected = 0.5 * 1.0 + 0.5 * math.log(0.005)
+    assert abs(head(None, None).item() - expected) < 1e-5
+    head.reset_log_vars()
+    assert torch.equal(head.log_vars.detach(), torch.zeros(4))
+
+
 def test_weighting_skips_missing_and_disabled_tasks():
     head = PedRecNetLossHead(torch.device("cpu"), use_p3d_loss=False)
     losses = [torch.tensor(1.0), None, torch.tensor(float("nan")), torch.tensor(0.3)]

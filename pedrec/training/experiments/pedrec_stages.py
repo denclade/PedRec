@@ -15,6 +15,21 @@ from typing import Dict, List, Optional, Tuple
 
 IMAGENET_INIT = "imagenet"
 
+# Default dataset balancing (relative sampling probability per dataset group, independent of the dataset sizes).
+# Sampling by size would let the largest sets decide the mix (SIM 187k, Fit3D 153k frames of few subjects in one
+# studio, Human3.6m 156k of 5 subjects). Rules:
+#   * >= 70 % real images: SIM is the only source of precise 3D labels in street scenes and of the head orientation,
+#     but rendered; more than ~1/3 synthetic images costs real image performance (domain gap), much less costs the
+#     3D accuracy on pedestrians (v1: 38 % SIM -> 17.7 mm SIM MPJPE)
+#   * COCO ~30 %: the only in-the-wild source for 2D pose (and body orientation via MEBOW)
+#   * Human3.6m at most ~15 %: studio, 5 subjects, redundant frames; the extra 3D sets add pose / subject variety
+#     weighted by diversity, not by frame count (AIST++ triangulated, noisier labels)
+# Groups which are not present are ignored (shares of the others renormalized), see the protocol for the used shares.
+DATASET_WEIGHTS_2D: Tuple[Tuple[str, float], ...] = (
+    ("coco", 0.40), ("sim", 0.25), ("h36m", 0.15), ("mpi_inf_3dhp", 0.10), ("fit3d", 0.05), ("aistpp", 0.05))
+DATASET_WEIGHTS_3D: Tuple[Tuple[str, float], ...] = (
+    ("coco", 0.30), ("sim", 0.30), ("h36m", 0.15), ("mpi_inf_3dhp", 0.10), ("fit3d", 0.10), ("aistpp", 0.05))
+
 
 @dataclass(frozen=True)
 class PedRecTrainingStage:
@@ -48,6 +63,9 @@ class PedRecTrainingStage:
     sim_val_subsampling: int = 10
     batch_size: int = 64
 
+    # dataset balancing (name, weight); empty = sampling proportional to the dataset sizes
+    dataset_weights: Tuple[Tuple[str, float], ...] = DATASET_WEIGHTS_3D
+
     @property
     def train_sigmas(self) -> bool:
         """The MTL loss weights are only trained when more than the 2D pose loss is active."""
@@ -70,13 +88,16 @@ _STAGES: List[PedRecTrainingStage] = [
     PedRecTrainingStage(
         name="p2d_c", init_from=IMAGENET_INIT,
         description="2D pose + joint confidence on COCO + Human3.6m + SIM, backbone from ImageNet.",
-        use_p3d_loss=False, use_orientation_loss=False,
+        use_p3d_loss=False, use_orientation_loss=False, dataset_weights=DATASET_WEIGHTS_2D,
         epochs_round_1=2, epochs_round_2=60, round_2_lr_divisors=(10.0, 2.0)),
     PedRecTrainingStage(
         name="p2d3d_c_o", init_from="p2d_c",
         description="Full network on COCO (MEBOW orientations) + Human3.6m + SIM. Used by the demo.",
         mebow_train=True, mebow_val=True,
-        epochs_round_1=5, epochs_round_2=30, round_2_lr_divisors=(10.0, 2.0)),
+        # The 3D pose / orientation heads start untrained: a long frozen backbone round with a high lr (v1: 10 epochs,
+        # lr 2e-3), then the full network with the v1 round 2 lrs (backbone 1e-4, heads 2e-4). Fixed lr because the LR
+        # range test is flat here (all heads but the new ones are converged) and suggested lrs 100x apart between runs.
+        epochs_round_1=10, epochs_round_2=40, round_2_lr_divisors=(10.0, 5.0), fixed_lr=1e-3),
 ]
 
 STAGES: Dict[str, PedRecTrainingStage] = {stage.name: stage for stage in _STAGES}

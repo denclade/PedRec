@@ -144,10 +144,17 @@ def get_experiment_protocol(experiment_description: ExperimentDescription):
     md += f"Notes. {experiment_description.initialization_notes}\n" \
           f"## Datasets\n" \
           f"### Training\n" \
-          f"| {'Dataset'.ljust(25)} | Subsampling | Full set length | Used length |\n" \
-          f"| {'-' * 25} | {'-' * 11} | {'-' * 15} | {'-' * 11} |\n"
+          f"| {'Dataset'.ljust(25)} | Subsampling | Full set length | Used length | Sampling share |\n" \
+          f"| {'-' * 25} | {'-' * 11} | {'-' * 15} | {'-' * 11} | {'-' * 14} |\n"
+    total_length = sum(dataset.used_length for dataset in experiment_description._train_sets)
     for dataset in experiment_description._train_sets:
-        md += f"| {dataset.name.ljust(25)} | {str(dataset.subsampling).ljust(11)} | {str(dataset.full_length).ljust(15)} | {str(dataset.used_length).ljust(11)} |\n"
+        share = dataset.sampling_share
+        if share is None:
+            share = dataset.used_length / max(total_length, 1)
+        md += f"| {dataset.name.ljust(25)} | {str(dataset.subsampling).ljust(11)} | {str(dataset.full_length).ljust(15)} | {str(dataset.used_length).ljust(11)} | {f'{100 * share:.1f}%'.ljust(14)} |\n"
+    if experiment_description.dataset_sampling_weights:
+        md += "Dataset weights: " + ", ".join(
+            f"{k}={v:g}" for k, v in experiment_description.dataset_sampling_weights.items()) + "\n"
     md += f"### Validation\n" \
           f"| {'Dataset'.ljust(25)} | Subsampling | Full set length | Used length |\n" \
           f"| {'-' * 25} | {'-' * 11} | {'-' * 15} | {'-' * 11} |\n"

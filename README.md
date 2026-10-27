@@ -158,7 +158,7 @@ images `img_<frame>.jpg`, same columns as the H36M / SIM dataframes: 26 joints 2
 with a progress bar and can be interrupted and restarted (extracted images are kept). MPI-INF-3DHP images are
 downscaled from 2048x2048 to 1024x1024 (`--max-image-size`, 0 = original size; the crops of PedRecNet are 192x256
 anyway). Expect hours for the full MPI-INF-3DHP / AIST++ conversion (all frames of all videos have to be decoded). As soon as they exist, `train:pedrec` uses them for training and validation
-(disable with `--no-extra-3d`, balance with e.g. `--dataset-weights coco=1,h36m=1,sim=1,mpi_inf_3dhp=0.5,fit3d=0.5,aistpp=0.5`)
+(disable with `--no-extra-3d`, sampled with the stage dataset weights, see below)
 and `train:lifter` adds the sequences. The new datasets have no orientation labels (orientation loss masked).
 
 Recommendations: AMASS (at least PosePrior + CMU) gives the temporal lifter a far larger pose / motion variety than
@@ -243,23 +243,39 @@ COCO, Human3.6m and SIM starting from the ImageNet backbone, `p2d3d_c_o` adds th
 with the MEBOW labels). Each stage trains two rounds (frozen backbone, then the full network), writes
 `experiment_pedrec_v2_<stage>_0_01.pth` / `experiment_pedrec_v2_<stage>_0.pth` (EMA weights), the best epoch
 `experiment_pedrec_v2_<stage>_0_best.pth` and a markdown protocol into *data/models/pedrec/single_results/*. The epochs
-per round are stage defaults (`--epochs-round-1/2` override them). Without `--lr` the LR range test runs first (plot
-next to the checkpoint). The schedules are starting points: check the protocols of the first runs.
+per round are stage defaults (`--epochs-round-1/2` override them). `p2d3d_c_o` uses a fixed lr (v1 level: 1e-3 with
+frozen backbone, then backbone 1e-4 / heads 2e-4); `p2d_c` runs the LR range test first (plot next to the checkpoint),
+`--lr` / `--lr-finder` override both. Every stage starts with equal multi task loss weights (Kendall uncertainty
+weighting, the learned log variances are logged every epoch).
+
+Dataset balancing: every stage samples the training datasets with fixed relative probabilities per dataset group
+(`DATASET_WEIGHTS_2D` / `DATASET_WEIGHTS_3D` in `pedrec_stages.py`), independent of their sizes, so adding a large
+dataset does not shift the mix:
+
+| Stage | COCO | SIM | H36M | MPI-INF-3DHP | Fit3D | AIST++ |
+| --- | --- | --- | --- | --- | --- | --- |
+| `p2d_c` | 40 % | 25 % | 15 % | 10 % | 5 % | 5 % |
+| `p2d3d_c_o` | 30 % | 30 % | 15 % | 10 % | 10 % | 5 % |
+
+At least 70 % real images (synthetic SIM: precise 3D labels and head orientations, but a domain gap), COCO for 2D in
+the wild, Human3.6m limited because of its 5 subjects in one studio. Missing datasets are ignored and the other shares
+renormalized; the protocol lists the used shares. `--dataset-weights sim=0.4,h36m=0.1` overrides single groups,
+`--dataset-weights size` samples proportional to the dataset sizes.
 
 Training stability options (PedRecNet and action recognition):
 
 | Option | Default | Effect |
 | --- | --- | --- |
 | `--amp auto/bf16/fp16/off` | auto (bf16 on RTX 30xx-50xx) | mixed precision; loss heads always in fp32, `off` = original fp32 training |
-| `--grad-clip N` | 10 | clip the global gradient norm |
+| `--grad-clip-rel F` | 5 (PedRecNet only) | clip the global gradient norm at F x its running mean (only spikes) |
+| `--grad-clip N` | 0 = off (action recognition 10) | absolute gradient norm limit (the norm scales with the MTL weights, a fixed limit ends up clipping every step) |
 | `--accumulate N` | 1 | gradient accumulation for GPUs with less memory |
 | `--ema-decay D` | 0.9998 (action recognition 0.999) | exponential moving average of the weights, used for validation and the checkpoints |
 | `--resume` | - | continue an interrupted stage from `experiment_pedrec_v2_<stage>_<cycle>_state.pth` (written every epoch) |
 
 Steps with a non-finite loss or gradient are skipped (the run stops after 50 in a row). The best epoch is selected by
 the mean relative improvement of all validation metrics (PCK, MPJPE, joint accuracy, orientation errors) compared to
-the first epoch. `--dataset-weights coco=1,h36m=1,sim=1` samples the training datasets with the given
-relative probabilities instead of proportional to their size.
+the first epoch. A warning is logged if more than half of the optimizer steps are clipped.
 
 ## Temporal 3D lifter
 `pedrec/training/train_lifter.py` trains the causal lifter on 3D ground truth sequences of Human3.6m, SIM-ROM and

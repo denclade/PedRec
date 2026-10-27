@@ -31,7 +31,8 @@ class ExperimentDescription(object):
     batch_size: int = 48
     batch_size_validate: int = 48
     num_workers: int = 12
-    dataset_sampling_weights: Optional[Dict[str, float]] = None  # e.g. {'coco': 1, 'h36m': 1, 'sim': 2}
+    # relative sampling probability per dataset group (experiment_dataset_helper.DATASET_NAMES), None = by size
+    dataset_sampling_weights: Optional[Dict[str, float]] = None
 
     use_train_coco: bool = True
     use_train_sim: bool = True

@@ -60,11 +60,17 @@ class PedRecNetLossHead(nn.Module):
     """
     Multi task loss with the uncertainty weighting of Kendall, Gal, Cipolla (CVPR 2018):
 
-        sum_i c_i exp(-s_i) L_i + s_i / 2,   s_i = log sigma_i^2 (clamped to [-4, 4] for stability)
+        sum_i c_i exp(-s_i) L_i + s_i / 2,   s_i = log sigma_i^2 (clamped to [LOG_VAR_MIN, LOG_VAR_MAX])
 
     with c = 1/2 for the regression tasks (2D pose, 3D pose, orientation) and 1 for the joint confidence
     (classification). Tasks without labels in the batch (loss NaN) are skipped; disabled tasks are not computed.
+
+    The optimum is s_i = log(2 c_i L_i). The normalized L1 pose losses reach ~0.005 (3D: 15 mm / 3000 mm), so the lower
+    bound has to be well below log(0.005) = -5.3: at the bound the weighting degenerates to equal, fixed weights and
+    the 3D pose loses its relative weight against the 2D pose.
     """
+    LOG_VAR_MIN = -8.0
+    LOG_VAR_MAX = 4.0
 
     def __init__(self, device, use_p3d_loss: bool = True, use_orientation_loss: bool = True,
                  use_conf_loss: bool = True):
@@ -79,6 +85,14 @@ class PedRecNetLossHead(nn.Module):
         self.use_orientation_loss = use_orientation_loss
         self.use_conf_loss = use_conf_loss
 
+    def reset_log_vars(self):
+        """
+        All tasks start with the same weight. Called at the start of a stage: the log variances of the predecessor stage
+        are adapted to its tasks (e.g. 2D pose at the lower bound while a new 3D head would start 50x lower weighted).
+        """
+        with torch.no_grad():
+            self.log_vars.zero_()
+
     def task_losses(self, outputs, targets):
         losses = [self.pose_loss_2d(outputs[0], targets["skeleton"]), None, None, None]
         if self.use_p3d_loss:
@@ -90,7 +104,7 @@ class PedRecNetLossHead(nn.Module):
         return losses
 
     def forward(self, outputs, targets):
-        log_vars = self.log_vars.clamp(-4, 4)
+        log_vars = self.log_vars.clamp(self.LOG_VAR_MIN, self.LOG_VAR_MAX)
         loss = 0
         for i, task_loss in enumerate(self.task_losses(outputs, targets)):
             if task_loss is None or torch.isnan(task_loss):

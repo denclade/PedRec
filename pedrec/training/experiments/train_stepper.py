@@ -3,7 +3,8 @@ Numerically robust optimizer steps shared by the PedRecNet and EHPI3D training.
 
 * mixed precision: bf16 autocast (default on GPUs with bf16 support, e.g. RTX 30xx-50xx) or fp16 with a GradScaler;
   the loss heads always run in fp32
-* gradient clipping (global L2 norm) after unscaling
+* gradient clipping (global L2 norm) after unscaling: absolute and / or relative to the running mean norm (clips only
+  spikes, independent of the loss scale which changes with the MTL weighting)
 * gradient accumulation (effective batch size = batch size x accumulate, for GPUs with 12 GB)
 * exponential moving average (EMA) of the weights incl. BatchNorm buffers
 * non-finite guard: steps with a NaN / inf loss or gradient norm are skipped instead of corrupting the weights;
@@ -25,12 +26,14 @@ logger = logging.getLogger(__name__)
 class TrainingOptions:
     amp: str = "auto"  # "auto" (bf16 if supported, else fp16 on CUDA, off on CPU), "bf16", "fp16" or "off"
     grad_clip: float = 10.0  # max global gradient norm, 0 disables clipping
+    grad_clip_rel: float = 0.0  # max global gradient norm as multiple of the running mean norm, 0 disables
     accumulate: int = 1  # optimizer step every n batches
     ema_decay: float = 0.9998  # 0 disables the EMA
     max_bad_steps: int = 50  # abort after this many consecutive non-finite steps
 
     def describe(self) -> str:
-        return (f"amp={self.amp}, grad_clip={self.grad_clip}, accumulate={self.accumulate}, "
+        return (f"amp={self.amp}, grad_clip={self.grad_clip}, grad_clip_rel={self.grad_clip_rel}, "
+                f"accumulate={self.accumulate}, "
                 f"ema_decay={self.ema_decay}")
 
 
@@ -73,6 +76,25 @@ class TrainStepper:
         self.stats = StepStats()
         self._consecutive_bad = 0
         self._micro_step = 0
+        self._running_norm = None
+        self._running_norm_steps = 0
+
+    RUNNING_NORM_DECAY = 0.99
+    RUNNING_NORM_WARMUP = 100  # steps before the relative clipping starts
+
+    def _max_norm(self) -> float:
+        max_norm = self.options.grad_clip if self.options.grad_clip > 0 else math.inf
+        if self.options.grad_clip_rel > 0 and self._running_norm_steps >= self.RUNNING_NORM_WARMUP:
+            max_norm = min(max_norm, self.options.grad_clip_rel * self._running_norm)
+        return max_norm
+
+    def _update_running_norm(self, norm: float):
+        # with the clipped norm, spikes do not raise the threshold
+        if self._running_norm is None:
+            self._running_norm = norm
+        else:
+            self._running_norm = self.RUNNING_NORM_DECAY * self._running_norm + (1 - self.RUNNING_NORM_DECAY) * norm
+        self._running_norm_steps += 1
 
     @staticmethod
     def create_ema(model: torch.nn.Module, options: TrainingOptions) -> Optional[AveragedModel]:
@@ -114,7 +136,7 @@ class TrainStepper:
         self._micro_step = 0
 
         self.scaler.unscale_(self.optimizer)
-        max_norm = self.options.grad_clip if self.options.grad_clip > 0 else math.inf
+        max_norm = self._max_norm()
         grad_norm = torch.nn.utils.clip_grad_norm_([p for p in self._params() if p.grad is not None], max_norm)
         grad_norm = float(grad_norm)
         if not math.isfinite(grad_norm):
@@ -131,6 +153,7 @@ class TrainStepper:
         self.stats.grad_norms.append(grad_norm)
         if grad_norm > max_norm:
             self.stats.clipped_steps += 1
+        self._update_running_norm(min(grad_norm, max_norm))
 
         self.scaler.step(self.optimizer)
         self.scaler.update()
@@ -143,11 +166,14 @@ class TrainStepper:
         return True
 
     def state_dict(self) -> dict:
-        return {"scaler": self.scaler.state_dict()}
+        return {"scaler": self.scaler.state_dict(), "running_norm": self._running_norm,
+                "running_norm_steps": self._running_norm_steps}
 
     def load_state_dict(self, state: dict):
         if "scaler" in state:
             self.scaler.load_state_dict(state["scaler"])
+        self._running_norm = state.get("running_norm")
+        self._running_norm_steps = state.get("running_norm_steps", 0)
 
 
 def steps_per_epoch(num_batches: int, accumulate: int) -> int:

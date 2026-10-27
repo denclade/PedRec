@@ -1,10 +1,12 @@
 import numpy as np
+import pytest
 import torch
 from torch.utils.data import TensorDataset
 
 from pedrec.datasets.augmentations import half_body_center_scale, color_jitter, random_erasing, UPPER_IDX, LOWER_IDX
 from pedrec.models.data_structures import ImageSize
-from pedrec.training.experiments.experiment_dataset_helper import get_dataset_balancing_sampler
+from pedrec.training.experiments.experiment_dataset_helper import get_dataset_balancing_sampler, \
+    get_dataset_sampling_shares
 
 
 def test_half_body_crop_is_smaller_than_the_person():
@@ -39,3 +41,17 @@ def test_dataset_balancing_sampler():
     indices = torch.tensor(list(iter(sampler)))
     share_small = (indices >= 900).float().mean().item()
     assert 0.4 < share_small < 0.6  # equal probability for both datasets despite the 9:1 size ratio
+
+
+def test_dataset_weights_apply_per_group():
+    """Both SIM files form one group: their weight is split by size instead of counting twice."""
+    shares = get_dataset_sampling_shares([300, 100, 1000, 50], ["sim", "sim", "coco", "h36m"],
+                                         {"sim": 0.5, "coco": 0.3, "h36m": 0.2, "fit3d": 0.4})
+    assert shares == pytest.approx([0.375, 0.125, 0.3, 0.2])  # fit3d is not present: renormalized without it
+
+
+def test_dataset_weights_reject_unknown_and_missing_names():
+    with pytest.raises(ValueError, match="Unknown"):
+        get_dataset_sampling_shares([10], ["coco"], {"coco": 1, "cocoo": 1})
+    with pytest.raises(ValueError, match="No sampling weight"):
+        get_dataset_sampling_shares([10, 10], ["coco", "sim"], {"coco": 1})

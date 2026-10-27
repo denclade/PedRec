@@ -123,6 +123,17 @@ def get_train_loader(experiment_description: ExperimentDescription, trans) -> Da
     if experiment_description.dataset_sampling_weights:
         sampler = get_dataset_balancing_sampler(train_sets, train_set_names,
                                                 experiment_description.dataset_sampling_weights)
+        shares = get_dataset_sampling_shares([len(d) for d in train_sets], train_set_names,
+                                             experiment_description.dataset_sampling_weights)
+        for dataset_description, share in zip(experiment_description._train_sets, shares):
+            dataset_description.sampling_share = share
+    group_shares: Dict[str, float] = {}
+    for dataset_description, name, dataset in zip(experiment_description._train_sets, train_set_names, train_sets):
+        share = dataset_description.sampling_share
+        if share is None:
+            share = len(dataset) / len(train_set)
+        group_shares[name] = group_shares.get(name, 0.0) + share
+    logger.info("Training samples per dataset: " + ", ".join(f"{n} {100 * s:.1f}%" for n, s in group_shares.items()))
     train_loader = DataLoader(train_set, batch_size=experiment_description.batch_size, shuffle=sampler is None,
                               sampler=sampler, num_workers=experiment_description.num_workers, pin_memory=True,
                               persistent_workers=experiment_description.num_workers > 0,
@@ -138,15 +149,40 @@ def get_extra_3d_dataset_cfg(subsample: int = 1):
     return cfg
 
 
+DATASET_NAMES = ["coco", "tud", "sim", "h36m"] + [extra.name for extra in EXTRA_3D_DATASETS if extra.has_images]
+
+
+def get_dataset_sampling_shares(lengths: List[int], names: List[str], weights: Dict[str, float]) -> List[float]:
+    """
+    Share of the training samples of every dataset. The weight of a name is the relative probability of the whole
+    group (e.g. both SIM files are "sim"), split between its datasets by size. Groups which are not present (e.g.
+    extra 3D datasets which are not converted) are ignored, the shares of the others are renormalized.
+    """
+    unknown = sorted(set(weights) - set(DATASET_NAMES))
+    if unknown:
+        raise ValueError(f"Unknown dataset weight(s) {unknown}, available: {DATASET_NAMES}")
+    missing = sorted(set(names) - set(weights))
+    if missing:
+        raise ValueError(f"No sampling weight for the training dataset(s) {missing} (weights: {weights})")
+    group_lengths: Dict[str, int] = {}
+    for length, name in zip(lengths, names):
+        group_lengths[name] = group_lengths.get(name, 0) + length
+    total_weight = sum(weights[name] for name, length in group_lengths.items() if length > 0)
+    if total_weight <= 0:
+        raise ValueError(f"The dataset weights of the training datasets sum up to 0: {weights}")
+    return [weights[name] / total_weight * length / group_lengths[name] if length > 0 else 0.0
+            for length, name in zip(lengths, names)]
+
+
 def get_dataset_balancing_sampler(train_sets, names: List[str], weights: Dict[str, float]) -> WeightedRandomSampler:
     """
     Samples the datasets with the given relative probabilities, independent of their sizes (e.g. so that the large
     simulation datasets do not dominate COCO). One epoch has as many samples as all datasets together.
     """
+    shares = get_dataset_sampling_shares([len(dataset) for dataset in train_sets], names, weights)
     sample_weights = []
-    for dataset, name in zip(train_sets, names):
-        weight = weights.get(name, 1.0)
-        sample_weights.append(torch.full((len(dataset),), weight / max(len(dataset), 1), dtype=torch.double))
+    for dataset, share in zip(train_sets, shares):
+        sample_weights.append(torch.full((len(dataset),), share / max(len(dataset), 1), dtype=torch.double))
     sample_weights = torch.cat(sample_weights)
     return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 

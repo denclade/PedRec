@@ -65,6 +65,32 @@ def test_stepper_gradient_accumulation_and_clipping():
     assert stepper.stats.clipped_steps == 1 and stepper.stats.optimizer_steps == 1
 
 
+def test_stepper_relative_clipping_only_clips_spikes():
+    net = torch.nn.Linear(2, 1)
+    optimizer = torch.optim.SGD(net.parameters(), lr=0.0)
+    stepper = TrainStepper(net, optimizer, None, torch.device("cpu"),
+                           TrainingOptions(ema_decay=0, grad_clip=0, grad_clip_rel=5.0))
+    for _ in range(TrainStepper.RUNNING_NORM_WARMUP + 50):
+        stepper.step(net(torch.ones(1, 2)).sum())
+    assert stepper.stats.clipped_steps == 0
+    stepper.step(net(torch.ones(1, 2) * 100).sum())
+    assert stepper.stats.clipped_steps == 1
+
+
+def test_stage_start_resets_mtl_weights(tmp_path):
+    stage = get_stage("p2d3d_c_o")
+    paths = get_experiment_paths(str(tmp_path))
+    paths.output_dir = str(tmp_path)
+    description = train_pedrec.get_experiment_description(stage, paths, batch_size=2, num_workers=0)
+    predecessor = train_pedrec.PedRecNetMTLWrapper(train_pedrec.PedRecNet(PedRecNetConfig()),
+                                                   train_pedrec.PedRecNetLossHead(torch.device("cpu")))
+    with torch.no_grad():
+        predecessor.loss_head.log_vars.copy_(torch.tensor([-4.0, 0.0, 0.0, -1.4]))
+    torch.save(predecessor.state_dict(), paths.get_stage_checkpoint_path(stage.init_from))
+    net = train_pedrec.build_net(stage, description, torch.device("cpu"))
+    assert torch.equal(net.loss_head.log_vars.detach(), torch.zeros(4))
+
+
 def test_relative_score_orientation():
     reference = {"COCO/pck@0.2": 80.0, "H36M/mpjpe": 60.0}
     assert relative_score({"COCO/pck@0.2": 80.0, "H36M/mpjpe": 60.0}, reference) == 1.0
@@ -166,3 +192,12 @@ def test_stage_chain_and_missing_predecessor(tmp_path):
     assert description.coco_train_dataset_cfg.half_body_prob > 0 and description.coco_train_dataset_cfg.use_mebow_orientation
     with pytest.raises(FileNotFoundError):
         train_pedrec.build_net(stage, description, torch.device("cpu"))
+
+
+def test_stage_dataset_weights_and_overrides():
+    stage = get_stage("p2d3d_c_o")
+    weights = train_pedrec.get_dataset_weights(stage)
+    assert weights["sim"] == 0.3 and weights["coco"] == 0.3
+    assert train_pedrec.get_dataset_weights(stage, "sim=0.4, h36m=0.1")["sim"] == 0.4
+    assert train_pedrec.get_dataset_weights(stage, "sim=0.4")["coco"] == 0.3
+    assert train_pedrec.get_dataset_weights(stage, "size") is None
