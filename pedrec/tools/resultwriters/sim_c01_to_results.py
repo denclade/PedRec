@@ -198,6 +198,7 @@ def main(output_path: str, dataset_cfg: PedRecDatasetConfig, pedrec_dataset_dir,
     print("finished")
     df = pd.DataFrame(data=result_rows, columns=get_column_names())
     set_df_dtypes(df)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     df.to_pickle(output_path)
     print("saved pred")
     del result_rows

@@ -151,6 +151,7 @@ def main(output_dir: str, output_postfix: str, net_cfg, coco_val: CocoDataset, w
 
     df_pred = pd.DataFrame(data=result_rows, columns=get_column_names())
     set_df_dtypes(df_pred)
+    os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"COCO_pred_df_{output_postfix}.pkl")
     df_pred.to_pickle(output_path)
 

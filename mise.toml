@@ -75,7 +75,7 @@ run = [
 [tasks."download:demo"]
 description = "Download the demo video into $PEDREC_DATA_DIR/demo"
 run = """
-set -euo pipefail
+set -eu
 mkdir -p "$PEDREC_DATA_DIR/demo"
 f="$PEDREC_DATA_DIR/demo/05070850_9672.m4v"
 if [ -f "$f" ]; then echo "exists: $f"; else curl -L --fail -o "$f" "https://dennisnotes.com/files/pedrec/demo/05070850_9672.m4v"; fi
@@ -200,9 +200,11 @@ arg "[stage]" default="p2d3d_c_o" help="Last stage of the chain"
 flag "--fresh" help="Train all stages of the chain from scratch: their old outputs are moved to single_results/archive_<timestamp>"
 '''
 run = """
-set -euo pipefail
+set -eu
 out="$PEDREC_DATA_DIR/models/pedrec/single_results"
-stages=$(python pedrec/training/train_pedrec.py --chain --stage "$usage_stage" | sed 's/ -> / /g')
+# POSIX sh (no pipefail): run python on its own so that a failure aborts the task
+chain=$(python pedrec/training/train_pedrec.py --chain --stage "$usage_stage")
+stages=$(printf '%s\n' "$chain" | sed 's/ -> / /g')
 if [ "${usage_fresh:-false}" = "true" ]; then
   archive="$out/archive_$(date +%Y%m%d_%H%M%S)"
   for stage in $stages; do
@@ -216,9 +218,11 @@ for stage in $stages; do
   ckpt="$out/experiment_pedrec_v2_${stage}_0.pth"
   if [ -f "$ckpt" ]; then echo "### skipping $stage (checkpoint exists: $ckpt)"; continue; fi
   # the final checkpoint is only written at the end of round 2: a state file without it = interrupted run
-  resume=()
-  if [ -f "${ckpt%.pth}_state.pth" ]; then resume=(--resume); echo "### resuming stage $stage"; else echo "### training stage $stage"; fi
-  python pedrec/training/train_pedrec.py --stage "$stage" "${resume[@]}"
+  if [ -f "${ckpt%.pth}_state.pth" ]; then
+    echo "### resuming stage $stage"; python pedrec/training/train_pedrec.py --stage "$stage" --resume
+  else
+    echo "### training stage $stage"; python pedrec/training/train_pedrec.py --stage "$stage"
+  fi
 done
 """
 
