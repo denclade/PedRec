@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from typing import Optional
+
 import numpy as np
 
 
@@ -14,3 +16,5 @@ class Pose3DValidationResults(object):
     pct_correct_joint_position_per_pair: np.ndarray
     pct_correct_joint_position_mean: np.ndarray
     num_examples: int
+    # J x 3 mean signed error (pred - GT, mm) in body coordinates (out / up / forward), see get_joint_bias_body
+    joint_bias_body: Optional[np.ndarray] = None

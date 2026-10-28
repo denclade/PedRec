@@ -129,3 +129,38 @@ def get_ref_distance_torso(gt_array: np.array):
     gt_distances = calc_array[:, 1, :] - calc_array[:, 0, :]
     return np.linalg.norm(gt_distances, axis=1)
     # TODO: Remove the ones where a joint is not visible?
+
+
+def get_joint_bias_body_2d(target: np.ndarray, pred: np.ndarray, min_lateral: float = 0.3) -> np.ndarray:
+    """
+    Mean signed 2D error (pred - target) per joint along the body axes in the image: out (away from the body center,
+    signed per side) and up (hip center -> shoulder center), in % of the torso length (independent of the person size
+    in pixels). Only frames with a visible torso seen from the front / back (hip distance >= min_lateral x torso), where
+    the lateral axis is defined. 2D counterpart of eval_pose_3d.get_joint_bias_body.
+    :return: J x 2, NaN for joints without labels
+    """
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_LR_PAIRS
+    J = SKELETON_PEDREC_JOINT
+
+    def joint(skeletons, j):
+        return skeletons[:, j.value, :2]
+    hip_center = (joint(target, J.left_hip) + joint(target, J.right_hip)) / 2
+    up = (joint(target, J.left_shoulder) + joint(target, J.right_shoulder)) / 2 - hip_center
+    torso = np.linalg.norm(up, axis=1)
+    up = up / (torso[:, None] + 1e-9)
+    lateral = joint(target, J.left_hip) - joint(target, J.right_hip)
+    lateral = lateral - np.sum(lateral * up, axis=1, keepdims=True) * up
+    lateral_length = np.linalg.norm(lateral, axis=1)
+    lateral = lateral / (lateral_length[:, None] + 1e-9)
+    error = (pred[:, :, :2] - target[:, :, :2]) / (torso[:, None, None] + 1e-9) * 100
+    body = np.stack([np.sum(error * lateral[:, None], axis=2), np.sum(error * up[:, None], axis=2)], axis=2)
+    for _, right in SKELETON_PEDREC_LR_PAIRS:
+        body[:, right, 0] *= -1
+    valid = (target[:, :, 3] == 1) & (target[:, :, 4] == 1)
+    torso_joints = [J.left_hip.value, J.right_hip.value, J.left_shoulder.value, J.right_shoulder.value]
+    frames = np.all(valid[:, torso_joints], axis=1) & (torso > 1) & (lateral_length >= min_lateral * torso)
+    valid &= frames[:, None]
+    counts = valid.sum(axis=0)
+    bias = np.where(valid[:, :, None], body, 0).sum(axis=0) / np.maximum(counts, 1)[:, None]
+    bias[counts == 0] = np.nan
+    return bias

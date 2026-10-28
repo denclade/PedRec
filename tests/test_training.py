@@ -198,7 +198,7 @@ def test_stage_chain_and_missing_predecessor(tmp_path):
 def test_stage_dataset_weights_and_overrides():
     stage = get_stage("p2d3d_c_o")
     weights = train_pedrec.get_dataset_weights(stage)
-    assert weights["sim"] == 0.3 and weights["coco"] == 0.3
+    assert weights["sim"] == 0.3 and weights["coco"] == 0.25 and weights["h36m"] == 0.2
     assert train_pedrec.get_dataset_weights(stage, "sim=0.4, h36m=0.1")["sim"] == 0.4
-    assert train_pedrec.get_dataset_weights(stage, "sim=0.4")["coco"] == 0.3
+    assert train_pedrec.get_dataset_weights(stage, "sim=0.4")["coco"] == 0.25
     assert train_pedrec.get_dataset_weights(stage, "size") is None

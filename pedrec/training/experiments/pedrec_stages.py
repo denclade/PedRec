@@ -27,8 +27,10 @@ IMAGENET_INIT = "imagenet"
 # Groups which are not present are ignored (shares of the others renormalized), see the protocol for the used shares.
 DATASET_WEIGHTS_2D: Tuple[Tuple[str, float], ...] = (
     ("coco", 0.40), ("sim", 0.25), ("h36m", 0.15), ("mpi_inf_3dhp", 0.10), ("fit3d", 0.05), ("aistpp", 0.05))
+# 3D: Human3.6m 20 % (direct comparison with v1; p2d_c with 15 % stayed ~2 PCK@0.05 behind the former run on H36M),
+# COCO 25 % (the 2D pose is trained in p2d_c already)
 DATASET_WEIGHTS_3D: Tuple[Tuple[str, float], ...] = (
-    ("coco", 0.30), ("sim", 0.30), ("h36m", 0.15), ("mpi_inf_3dhp", 0.10), ("fit3d", 0.10), ("aistpp", 0.05))
+    ("coco", 0.25), ("sim", 0.30), ("h36m", 0.20), ("mpi_inf_3dhp", 0.10), ("fit3d", 0.10), ("aistpp", 0.05))
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,11 @@ class PedRecTrainingStage:
     # map the predictions to the joint convention of each dataset for the pose losses / validation
     # (pedrec_convention_adapter, training only); off = all datasets are trained on the canonical skeleton
     use_convention_adapter: bool = True
+    # L2 pull of the adapter offsets towards the identity. The offsets are a few hundred global parameters per dataset
+    # and cannot overfit; a strong pull lets the canonical skeleton drift to the mean of the conventions (p2d_c with
+    # 1e-3: hips ~2 cm wider, head top ~3 cm lower than SIM after 25 epochs) instead of staying in the SIM convention
+    # that the lifter / action recognition (SIM-C01) expect. Check the "SIM 3D bias" log line.
+    convention_adapter_reg: float = 1e-6
 
     # dataset balancing (name, weight); empty = sampling proportional to the dataset sizes
     dataset_weights: Tuple[Tuple[str, float], ...] = DATASET_WEIGHTS_3D

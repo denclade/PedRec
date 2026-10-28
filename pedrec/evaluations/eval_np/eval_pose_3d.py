@@ -1,6 +1,7 @@
 import numpy as np
 
-from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_PARENT_CHILD_PAIRS
+from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_PARENT_CHILD_PAIRS, SKELETON_PEDREC_JOINT as J, \
+    SKELETON_PEDREC_LR_PAIRS
 
 
 def get_euclidean_distances_joint_3d(target: np.ndarray, pred: np.ndarray):
@@ -134,3 +135,33 @@ def __get_visible_joint_array(arr: np.ndarray, joint_num_a: int, joint_num_b: in
     selected = arr[:, joint_num_a, :]
     return selected[(target[:, joint_num_a, 3] == 1) & (target[:, joint_num_b, 3] == 1)]
 
+
+
+def get_joint_bias_body(target: np.ndarray, pred: np.ndarray) -> np.ndarray:
+    """
+    Mean signed error (pred - target) per joint in body coordinates of the target: out (away from the body center,
+    lateral axis signed per side), up (hip center -> shoulder center) and forward. Unlike the MPJPE it shows systematic
+    offsets, e.g. a predicted skeleton convention that differs from the labels (hips 2 cm too wide: hip out +20).
+    :return: J x 3 in the units of the input (mm), NaN for joints without labels
+    """
+    def joint(skeletons, j):
+        return skeletons[:, j.value, :3]
+    hip_center = (joint(target, J.left_hip) + joint(target, J.right_hip)) / 2
+    up = (joint(target, J.left_shoulder) + joint(target, J.right_shoulder)) / 2 - hip_center
+    up /= np.linalg.norm(up, axis=1, keepdims=True) + 1e-9
+    lateral = joint(target, J.left_hip) - joint(target, J.right_hip)
+    lateral -= np.sum(lateral * up, axis=1, keepdims=True) * up
+    lateral /= np.linalg.norm(lateral, axis=1, keepdims=True) + 1e-9
+    forward = np.cross(up, lateral)
+    error = pred[:, :, :3] - target[:, :, :3]
+    body = np.stack([np.sum(error * lateral[:, None], axis=2), np.sum(error * up[:, None], axis=2),
+                     np.sum(error * forward[:, None], axis=2)], axis=2)
+    for _, right in SKELETON_PEDREC_LR_PAIRS:
+        body[:, right, 0] *= -1
+    valid = (target[:, :, 3] == 1) & (target[:, :, 4] == 1)
+    torso = np.all(valid[:, [J.left_hip.value, J.right_hip.value, J.left_shoulder.value, J.right_shoulder.value]], axis=1)
+    valid &= torso[:, None]
+    counts = valid.sum(axis=0)
+    bias = np.where(valid[:, :, None], body, 0).sum(axis=0) / np.maximum(counts, 1)[:, None]
+    bias[counts == 0] = np.nan
+    return bias

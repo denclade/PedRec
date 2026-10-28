@@ -244,3 +244,46 @@ def test_convention_adapter_describes_net_offsets_in_body_coordinates():
     assert displacement[J.left_hip.value, 0] > 10 and displacement[J.right_hip.value, 0] < -10  # mm, outwards
     assert "hip out +1.1 up +0.0 fwd +0.0 cm" in adapter.describe()[h36m]
     assert adapter.describe()[get_convention_index("fit3d")] == "fit3d: identity"
+
+
+def test_joint_bias_body_shows_convention_offsets():
+    from pedrec.evaluations.eval_np.eval_pose_3d import get_joint_bias_body
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import get_reference_pose
+    rng = np.random.default_rng(0)
+    reference = get_reference_pose().numpy()
+    targets, preds = [], []
+    for _ in range(8):  # random body rotations around the vertical axis
+        angle = rng.uniform(0, 2 * np.pi)
+        rotation = np.array([[np.cos(angle), 0, np.sin(angle)], [0, 1, 0], [-np.sin(angle), 0, np.cos(angle)]])
+        pred = reference.copy()
+        pred[J.left_hip.value, 0] += 20  # hips 2 cm wider
+        pred[J.right_hip.value, 0] -= 20
+        pred[J.head_upper.value, 1] -= 30  # head top 3 cm lower
+        targets.append(np.concatenate([reference @ rotation.T, np.ones((26, 3))], axis=1))
+        preds.append(np.concatenate([pred @ rotation.T, np.ones((26, 1))], axis=1))
+    bias = get_joint_bias_body(np.stack(targets), np.stack(preds))
+    assert np.allclose(bias[J.left_hip.value], [20, 0, 0], atol=0.5)
+    assert np.allclose(bias[J.right_hip.value], [20, 0, 0], atol=0.5)  # outwards for both sides
+    assert np.allclose(bias[J.head_upper.value], [0, -30, 0], atol=0.5)
+    assert np.allclose(bias[J.left_knee.value], 0, atol=0.5)
+
+
+def test_joint_bias_body_2d_in_percent_of_torso():
+    from pedrec.evaluations.eval_np.eval_pose_2d import get_joint_bias_body_2d
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import get_reference_pose
+    reference = get_reference_pose().numpy()[:, :2] * np.array([1, -1]) + 500  # image: y down
+    for scale in (0.2, 0.5):  # independent of the person size in pixels
+        target = reference * scale
+        pred = target.copy()
+        torso = np.linalg.norm((target[J.left_shoulder.value] + target[J.right_shoulder.value]) / 2 -
+                               target[J.hip_center.value])
+        pred[J.left_hip.value, 0] += 0.1 * torso  # hips 10 % torso wider (left side is image right here)
+        pred[J.right_hip.value, 0] -= 0.1 * torso
+        pred[J.head_upper.value, 1] += 0.05 * torso  # head top 5 % lower (image y down)
+        labels = np.concatenate([target, np.ones((26, 3))], axis=1)[None]
+        bias = get_joint_bias_body_2d(labels, np.concatenate([pred, np.ones((26, 3))], axis=1)[None])
+        assert np.allclose(bias[J.left_hip.value], [10, 0], atol=0.1)
+        assert np.allclose(bias[J.right_hip.value], [10, 0], atol=0.1)
+        assert np.allclose(bias[J.head_upper.value], [0, -5], atol=0.1)

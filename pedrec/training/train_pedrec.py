@@ -28,6 +28,7 @@ from pedrec.utils.torch_utils.checkpoint_io import load_state_dict_file
 from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.experiment_round_description import ExperimentRoundDescription
+from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
 from pedrec.networks.net_pedrec.pedrec_net_mtl_wrapper import PedRecNetMTLWrapper
 from pedrec.training.experiments.experiment_dataset_helper import get_validation_sets, get_train_loader
@@ -110,7 +111,8 @@ def build_net(stage: PedRecTrainingStage, description: ExperimentDescription, de
                                   use_orientation_loss=stage.use_orientation_loss,
                                   use_conf_loss=stage.use_conf_loss,
                                   use_convention_adapter=stage.use_convention_adapter
-                                  if use_convention_adapter is None else use_convention_adapter)
+                                  if use_convention_adapter is None else use_convention_adapter,
+                                  convention_adapter_reg=stage.convention_adapter_reg)
     net = PedRecNetMTLWrapper(net, loss_head)
     description.initialization_notes += (f". Joint convention adapter: "
                                          f"{'on' if loss_head.convention_adapter is not None else 'off'}")
@@ -181,6 +183,25 @@ def find_learning_rate(net, params, train_loader, device, output_path: str) -> f
 # The convention adapter has its own, stage independent lr: offsets of ~0.1 are reached within a few thousand steps,
 # with the head lr (up to 1e-2) they jump by several cm per step.
 CONVENTION_ADAPTER_MAX_LR = 1e-3
+
+
+BIAS_JOINTS = [J.left_hip, J.left_shoulder, J.neck, J.head_upper, J.left_knee]
+
+
+def format_joint_bias(bias, unit: str = "cm", scale: float = 0.1) -> str:
+    """
+    Mean signed error (pred - GT) of some convention dependent joints along the body axes (out / up / forward for 3D in
+    mm, out / up for 2D in % torso), scaled for the output.
+    """
+    terms = []
+    for joint in BIAS_JOINTS:
+        values = (bias[joint.value] * scale).tolist()
+        if values[0] == values[0]:  # not NaN
+            text = f"{joint.name.replace('left_', '')} out {values[0]:+.1f} up {values[1]:+.1f}"
+            if len(values) > 2:
+                text += f" fwd {values[2]:+.1f}"
+            terms.append(text)
+    return " | ".join(terms) + f" {unit}"
 
 
 def get_max_lrs(stage: PedRecTrainingStage, base_lr: float, backbone_divisor: float = 1.0,
@@ -278,6 +299,13 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         if net.loss_head.convention_adapter is not None:
             for line in net.loss_head.convention_adapter.describe():
                 logger.info(f"Joint convention {line}")
+        # systematic 3D offsets; SIM (canonical skeleton) should stay close to 0, else the canonical skeleton drifts
+        for set_name, set_results in results.validation_results.items():
+            if set_results.pose2d_pck is not None and set_results.pose2d_pck.joint_bias_body is not None:
+                logger.info(f"{set_name} 2D bias (pred - GT): "
+                            f"{format_joint_bias(set_results.pose2d_pck.joint_bias_body, '% torso', 1.0)}")
+            if set_results.pose3d is not None and set_results.pose3d.joint_bias_body is not None:
+                logger.info(f"{set_name} 3D bias (pred - GT): {format_joint_bias(set_results.pose3d.joint_bias_body)}")
         if stage_state.best.update(results.validation_results, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "

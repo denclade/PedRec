@@ -256,7 +256,7 @@ dataset does not shift the mix:
 | Stage | COCO | SIM | H36M | MPI-INF-3DHP | Fit3D | AIST++ |
 | --- | --- | --- | --- | --- | --- | --- |
 | `p2d_c` | 40 % | 25 % | 15 % | 10 % | 5 % | 5 % |
-| `p2d3d_c_o` | 30 % | 30 % | 15 % | 10 % | 10 % | 5 % |
+| `p2d3d_c_o` | 25 % | 30 % | 20 % | 10 % | 10 % | 5 % |
 
 At least 70 % real images (synthetic SIM: precise 3D labels and head orientations, but a domain gap), COCO for 2D in
 the wild, Human3.6m limited because of its 5 subjects in one studio. Missing datasets are ignored and the other shares
@@ -269,7 +269,9 @@ predicts one canonical skeleton in the SIM convention (as SIM-C01 for the lifter
 training a per dataset adapter (`pedrec/networks/net_pedrec/pedrec_convention_adapter.py`) maps the prediction to the
 dataset convention before the pose losses, as offsets built from bone vectors of the neighbouring joints (they rotate
 and scale with the body). Knees, ankles, elbows and wrists stay fixed, so it cannot learn body proportions. Validation
-compares in the dataset convention; the learned offsets are logged every epoch. The adapter is part of the loss head
+compares in the dataset convention; the learned offsets are logged every epoch, together with the mean signed 3D error
+per set ("SIM 3D bias": the canonical skeleton should stay within ~1 cm of the SIM convention; a weak pull of the
+adapter towards the identity, `convention_adapter_reg`, keeps it there). The adapter is part of the loss head
 only (no effect on inference or the extracted network); `--no-convention-adapter` trains every dataset on the
 canonical skeleton.
 

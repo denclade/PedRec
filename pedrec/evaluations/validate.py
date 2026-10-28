@@ -15,9 +15,9 @@ from tqdm import tqdm
 from pedrec.evaluations.eval_helper import get_total_coords
 from pedrec.evaluations.eval_np.eval_angular import get_angular_error_statistics
 from pedrec.evaluations.eval_np.eval_classification import get_binary_multi_label_accuracy, get_joint_label_accuracy
-from pedrec.evaluations.eval_np.eval_pose_2d import get_pck_results
+from pedrec.evaluations.eval_np.eval_pose_2d import get_pck_results, get_joint_bias_body_2d
 from pedrec.evaluations.eval_np.eval_pose_3d import get_dim_distances, get_mpjpe, get_relative_correct_depth, \
-    get_relative_correct_joint_positions
+    get_relative_correct_joint_positions, get_joint_bias_body
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT, SKELETON_PEDREC_PARENT_CHILD_PAIRS
 from pedrec.models.data_structures import ImageSize
 from pedrec.models.validation.env_position_validation_results import EnvPositionValidationResults
@@ -103,7 +103,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
             pose2d_gt = get_total_coords(pose2d_gt, model_input_size, centers, scales, rotations)
 
             pose3d_gt = labels["skeleton_3d"].cpu().detach().numpy()
-            pose3d_gt[:, :, :3] = pose3d_gt[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2) # to cm
+            pose3d_gt[:, :, :3] = pose3d_gt[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2)  # to mm
 
             orientation_gt = labels["orientation"].cpu().detach().numpy()
 
@@ -114,7 +114,7 @@ def validate(net: nn.Module, val_loader: DataLoader,
                 pose2d_preds.append(pose2d_pred)
             if validate_3D:
                 pose3d_pred = preds["skeleton_3d"]
-                pose3d_pred[:, :, :3] = pose3d_pred[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2)  # to cm
+                pose3d_pred[:, :, :3] = pose3d_pred[:, :, :3] * skeleton_3d_range - (skeleton_3d_range / 2)  # to mm
                 pose3d_gts.append(pose3d_gt)
                 pose3d_preds.append(pose3d_pred)
 
@@ -175,7 +175,8 @@ def get_2d_pose_pck_results(target: np.ndarray, pred: np.ndarray) -> Pose2DValid
         pck_05=pck_05,
         pck_2=pck_2,
         pck_05_mean=pck_05_mean,
-        pck_2_mean=pck_2_mean
+        pck_2_mean=pck_2_mean,
+        joint_bias_body=get_joint_bias_body_2d(target, pred)
     )
 
 
@@ -207,7 +208,8 @@ def get_3d_pose_results(target: np.ndarray, pred: np.ndarray) -> Pose3DValidatio
         pct_correct_depth_mean=pct_correct_depth_mean,
         pct_correct_joint_position_per_pair=pct_correct_joint_positions_per_pair,
         pct_correct_joint_position_mean=pct_correct_joint_positions_mean,
-        num_examples=target.shape[0]
+        num_examples=target.shape[0],
+        joint_bias_body=get_joint_bias_body(target, pred)
     )
 
 def get_env_position_results(env_position_gts, env_position_preds) -> EnvPositionValidationResults:

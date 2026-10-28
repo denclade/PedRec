@@ -78,7 +78,8 @@ class PedRecNetLossHead(nn.Module):
     LOG_VAR_MAX = 4.0
 
     def __init__(self, device, use_p3d_loss: bool = True, use_orientation_loss: bool = True,
-                 use_conf_loss: bool = True, use_convention_adapter: bool = False, num_joints: int = 26):
+                 use_conf_loss: bool = True, use_convention_adapter: bool = False, num_joints: int = 26,
+                 convention_adapter_reg: float = 1e-6):
         super(PedRecNetLossHead, self).__init__()
         self.pose_loss_2d = Pose2DL1Loss()
         self.pose_loss_3d = Pose3DL1Loss()
@@ -89,7 +90,8 @@ class PedRecNetLossHead(nn.Module):
         self.use_p3d_loss = use_p3d_loss
         self.use_orientation_loss = use_orientation_loss
         self.use_conf_loss = use_conf_loss
-        self.convention_adapter = ConventionAdapter(num_joints) if use_convention_adapter else None
+        self.convention_adapter = ConventionAdapter(num_joints, reg_weight=convention_adapter_reg) \
+            if use_convention_adapter else None
 
     def adapt_outputs(self, outputs, targets):
         """Outputs with the 2D / 3D poses in the joint conventions of the samples (unchanged without adapter)."""

@@ -84,7 +84,7 @@ def get_flip_permutation(num_joints: int) -> torch.Tensor:
 
 
 class ConventionAdapter(nn.Module):
-    def __init__(self, num_joints: int = 26, conventions: List[str] = None, reg_weight: float = 1e-3):
+    def __init__(self, num_joints: int = 26, conventions: List[str] = None, reg_weight: float = 1e-6):
         super().__init__()
         self.conventions = list(conventions or CONVENTIONS)
         self.reg_weight = reg_weight
