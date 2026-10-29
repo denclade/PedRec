@@ -133,7 +133,7 @@ def get_ref_distance_torso(gt_array: np.array):
 
 def get_joint_bias_body_2d(target: np.ndarray, pred: np.ndarray, min_lateral: float = 0.3) -> np.ndarray:
     """
-    Mean signed 2D error (pred - target) per joint along the body axes in the image: out (away from the body center,
+    Median signed 2D error (pred - target) per joint along the body axes in the image: out (away from the body center,
     signed per side) and up (hip center -> shoulder center), in % of the torso length (independent of the person size
     in pixels). Only frames with a visible torso seen from the front / back (hip distance >= min_lateral x torso), where
     the lateral axis is defined. 2D counterpart of eval_pose_3d.get_joint_bias_body.
@@ -160,7 +160,5 @@ def get_joint_bias_body_2d(target: np.ndarray, pred: np.ndarray, min_lateral: fl
     torso_joints = [J.left_hip.value, J.right_hip.value, J.left_shoulder.value, J.right_shoulder.value]
     frames = np.all(valid[:, torso_joints], axis=1) & (torso > 1) & (lateral_length >= min_lateral * torso)
     valid &= frames[:, None]
-    counts = valid.sum(axis=0)
-    bias = np.where(valid[:, :, None], body, 0).sum(axis=0) / np.maximum(counts, 1)[:, None]
-    bias[counts == 0] = np.nan
-    return bias
+    from pedrec.evaluations.eval_np.eval_pose_3d import _masked_median
+    return _masked_median(body, valid)

@@ -190,8 +190,8 @@ BIAS_JOINTS = [J.left_hip, J.left_shoulder, J.neck, J.head_upper, J.left_knee]
 
 def format_joint_bias(bias, unit: str = "cm", scale: float = 0.1) -> str:
     """
-    Mean signed error (pred - GT) of some convention dependent joints along the body axes (out / up / forward for 3D in
-    mm, out / up for 2D in % torso), scaled for the output.
+    Median signed error (pred - GT) of some convention dependent joints along the body axes (out / up / forward for 3D
+    in mm, out / up for 2D in % torso), scaled for the output.
     """
     terms = []
     for joint in BIAS_JOINTS:
@@ -302,10 +302,17 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         # systematic 3D offsets; SIM (canonical skeleton) should stay close to 0, else the canonical skeleton drifts
         for set_name, set_results in results.validation_results.items():
             if set_results.pose2d_pck is not None and set_results.pose2d_pck.joint_bias_body is not None:
-                logger.info(f"{set_name} 2D bias (pred - GT): "
+                logger.info(f"{set_name} 2D bias (median pred - GT): "
                             f"{format_joint_bias(set_results.pose2d_pck.joint_bias_body, '% torso', 1.0)}")
-            if set_results.pose3d is not None and set_results.pose3d.joint_bias_body is not None:
-                logger.info(f"{set_name} 3D bias (pred - GT): {format_joint_bias(set_results.pose3d.joint_bias_body)}")
+            if set_results.pose3d is not None:
+                pose3d = set_results.pose3d
+                if pose3d.joint_bias_body is not None:
+                    logger.info(f"{set_name} 3D bias (median pred - GT): {format_joint_bias(pose3d.joint_bias_body)}")
+                # mean absolute error per camera axis: which part of the MPJPE is depth
+                axes = [np.nanmean(d) for d in (pose3d.mean_joint_x_distances, pose3d.mean_joint_y_distances,
+                                                pose3d.mean_joint_depth_distances)]
+                logger.info(f"{set_name} 3D error per axis: x {axes[0]:.1f} | y {axes[1]:.1f} | depth {axes[2]:.1f} mm "
+                            f"(MPJPE {pose3d.mpjpe_mean:.1f})")
         if stage_state.best.update(results.validation_results, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "

@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_PARENT_CHILD_PAIRS, SKELETON_PEDREC_JOINT as J, \
@@ -139,9 +141,10 @@ def __get_visible_joint_array(arr: np.ndarray, joint_num_a: int, joint_num_b: in
 
 def get_joint_bias_body(target: np.ndarray, pred: np.ndarray) -> np.ndarray:
     """
-    Mean signed error (pred - target) per joint in body coordinates of the target: out (away from the body center,
+    Median signed error (pred - target) per joint in body coordinates of the target: out (away from the body center,
     lateral axis signed per side), up (hip center -> shoulder center) and forward. Unlike the MPJPE it shows systematic
-    offsets, e.g. a predicted skeleton convention that differs from the labels (hips 2 cm too wide: hip out +20).
+    offsets, e.g. a predicted skeleton convention that differs from the labels (hips 2 cm too wide: hip out +20). The
+    median, as the L1 pose losses, is not pulled away by failures on hard poses (a mean would be).
     :return: J x 3 in the units of the input (mm), NaN for joints without labels
     """
     def joint(skeletons, j):
@@ -161,7 +164,12 @@ def get_joint_bias_body(target: np.ndarray, pred: np.ndarray) -> np.ndarray:
     valid = (target[:, :, 3] == 1) & (target[:, :, 4] == 1)
     torso = np.all(valid[:, [J.left_hip.value, J.right_hip.value, J.left_shoulder.value, J.right_shoulder.value]], axis=1)
     valid &= torso[:, None]
-    counts = valid.sum(axis=0)
-    bias = np.where(valid[:, :, None], body, 0).sum(axis=0) / np.maximum(counts, 1)[:, None]
-    bias[counts == 0] = np.nan
-    return bias
+    return _masked_median(body, valid)
+
+
+def _masked_median(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """N x J x D values, N x J mask -> J x D median over the valid entries (NaN for joints without any)."""
+    masked = np.where(valid[:, :, None], values, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # "All-NaN slice": joints without labels
+        return np.nanmedian(masked, axis=0)

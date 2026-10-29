@@ -319,6 +319,10 @@ description = "SIM-C01 MSJPE / PCK / orientation result tables"
 run = "python pedrec/evaluations/sim_c01_eval_export.py"
 
 # ------------------------------------------------------------------------------------------------------- tools
+[tasks."results:collect"]
+description = "Comparison values in doc/experiments/results.csv: add <protocol.md> --run --model --stage | compare --metrics ..."
+run = "python pedrec/tools/experiments/collect_results.py"
+
 [tasks."tools:extract-net"]
 description = "Extract the plain network weights (*_net.pth, used by the demo) from a training checkpoint: --stage <stage>"
 run = "python pedrec/tools/networks/mtl_net_extractor.py"

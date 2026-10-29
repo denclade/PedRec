@@ -287,3 +287,15 @@ def test_joint_bias_body_2d_in_percent_of_torso():
         assert np.allclose(bias[J.left_hip.value], [10, 0], atol=0.1)
         assert np.allclose(bias[J.right_hip.value], [10, 0], atol=0.1)
         assert np.allclose(bias[J.head_upper.value], [0, -5], atol=0.1)
+
+
+def test_joint_bias_is_a_median_robust_to_failures():
+    from pedrec.evaluations.eval_np.eval_pose_3d import get_joint_bias_body
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    from pedrec.networks.net_pedrec.pedrec_convention_adapter import get_reference_pose
+    reference = get_reference_pose().numpy()
+    target = np.repeat(np.concatenate([reference, np.ones((26, 3))], axis=1)[None], 5, axis=0)
+    pred = target.copy()
+    pred[:, J.head_upper.value, 1] -= 20  # 2 cm lower in all frames
+    pred[0, J.head_upper.value, 1] -= 500  # one failure
+    assert np.isclose(get_joint_bias_body(target, pred)[J.head_upper.value, 1], -20)

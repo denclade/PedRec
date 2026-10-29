@@ -322,6 +322,7 @@ The training uses the SIM-C01 skeleton dataframes and the PedRecNet results on t
 | `mise run eval:ehpi3d --variants gt_pred_64frames` | Action recognition metrics on SIM-C01 |
 | `mise run results:coco` / `results:h36m` / `results:sim-c01` | Write PedRecNet result dataframes (`--experiments <stages>`) |
 | `mise run export:coco` / `export:h36m` / `export:sim-c01` | Markdown / LaTeX result tables from the result dataframes (as used in `doc/diss_eval`) |
+| `mise run results:collect add <protocol.md> --run ... --model ... --stage ...` / `compare --metrics ...` | Comparison values of the trainings (v1, v2 runs) in `doc/experiments/results.csv`, see `doc/experiments/README.md` |
 
 # Project structure
 ```
