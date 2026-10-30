@@ -354,8 +354,9 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
         canonical_results = validate_canonical(eval_net, validation_sets, device,
                                                description.net_cfg.model.input_size)
         log_canonical_results(canonical_results, results.validation_results)
-        # the best epoch is selected on the canonical poses (deployed network) of the sets with an own convention
-        if stage_state.best.update({**results.validation_results, **canonical_results}, name):
+        # selection on the adapted results: the canonical ones include the convention differences (SIM vs. dataset
+        # labels) and would reward a canonical skeleton drifting towards the dataset conventions
+        if stage_state.best.update(results.validation_results, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "
                         f"{best_checkpoint_path}")

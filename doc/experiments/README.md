@@ -60,8 +60,9 @@ the log) is overwritten by its protocol once it is finished.
   dataset's convention with the convention adapter. Its root row took 86 % of the hip mean (free, the canonical root
   is the hip mean), so the canonical skeleton drifted ~20 cm from its root on studio images: H36M 74.8 mm adapted vs.
   236.3 mm canonical (`eval:h36m`). The 3D values of this run describe the adapted, not the deployed network. Since the
-  fix (root adapts only along the spine) the training also logs the canonical results ("Canonical (no adapter)") and
-  selects the best epoch on them.
+  fix (root adapts only along the spine) the training also logs the canonical results ("Canonical (no adapter)"). They
+  include the real convention differences (SIM convention vs. dataset labels, e.g. H36M 2D PCK@0.05 ~25 canonical vs.
+  ~37 adapted after the first p2d_c epoch), only a gap growing during the training indicates a drift.
 * **Joints in MPJPE**: the training validation averages all 21 joints with H36M labels incl. hand / foot ends (v1 too),
   `eval:h36m` the standard 17 joints. `v2-2026-10-28` R2E39 adapted: 74.8 mm (21) / 66.2 mm (17).
 * **v1 reference network**: `p2d3d_c_o_h36m_sim_mebow` (demo, SIM-C01 results of the lifter / action recognition).
