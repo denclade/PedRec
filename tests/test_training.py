@@ -110,6 +110,7 @@ def test_stage_rounds_ema_best_and_resume(tmp_path, monkeypatch):
     val_sets = [ValidationSet(name="SYN", loader=DataLoader(SyntheticPoseDataset(), batch_size=2), val_set_cfg=None,
                               validate_2D=True, validate_3D=True, validate_orientation=True,
                               validate_pose_conf=True, validate_env_position=False)]
+    val_sets[0].loader.dataset.convention = 2  # Human3.6m: additionally validated without the adapter (canonical)
     monkeypatch.setattr(train_pedrec, "get_train_loader", lambda *a, **k: loader)
     monkeypatch.setattr(train_pedrec, "get_validation_sets", lambda *a, **k: val_sets)
 

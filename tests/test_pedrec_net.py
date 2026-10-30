@@ -188,6 +188,30 @@ def test_convention_adapter_is_rotation_and_flip_equivariant():
     assert torch.allclose(adapted_flipped, expected, atol=1e-5)
 
 
+def test_convention_adapter_does_not_hide_a_shift_against_the_root():
+    """The root takes no offsets from the hips (the canonical root is their mean, such weights are free): a shift of all
+    other joints against the root must reach the loss (v2-2026-10-28: root <- 0.86 * hip mean, the canonical skeleton
+    drifted ~20 cm on studio images while the adapted poses matched the labels)."""
+    from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+    adapter = _random_adapter()
+    root = J.hip_center.value
+    with torch.no_grad():  # the learned weights of v2-2026-10-28
+        adapter.offsets[:, root, J.left_hip.value] = 0.4
+        adapter.offsets[:, root, J.right_hip.value] = 0.4
+    weights = adapter.offset_weights()
+    assert torch.all(weights[:, root, [J.left_hip.value, J.right_hip.value]] == 0)
+    pose_3d = torch.rand(4, 26, 3)
+    t = torch.tensor([0.05, -0.03, 0.04])
+    shifted = pose_3d + t
+    shifted[:, root] = pose_3d[:, root]
+    convention = torch.tensor([2, 3, 4, 5])
+    _, adapted = adapter(pose_3d[..., :2], pose_3d, convention)
+    _, adapted_shifted = adapter(shifted[..., :2], shifted, convention)
+    others = [k for k in range(26) if k != root]
+    passed_on = ((adapted_shifted - adapted)[:, others] @ t) / (t @ t)
+    assert passed_on.min() > 0.5  # 0.14 with the hip weights
+
+
 def test_convention_adapter_learns_a_hip_convention():
     """Targets with the hips moved down by 15 % of the torso: only the adapter is trained and recovers the offset."""
     from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J

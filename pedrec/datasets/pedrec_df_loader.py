@@ -31,7 +31,11 @@ def set_scene_start_end(df: pd.DataFrame):
 
 def get_filter_actions(df: pd.DataFrame, action_filter):
     filter_action = None
-    if action_filter is not None:
+    if isinstance(action_filter, str):
+        # regex on the image directory: Human3.6m has no action labels (actions = -1), the action is part of the
+        # video name, e.g. 'S9/Images/Directions 1.54138969' (as h36m_eval_export.get_skeleton2d)
+        filter_action = df["img_dir"].str.contains(action_filter, regex=True)
+    elif action_filter is not None:
         filter_action = (df["actions"].apply(lambda x: action_filter in x))
     return filter_action
 

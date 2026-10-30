@@ -29,6 +29,7 @@ from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.models.experiments.experiment_description import ExperimentDescription
 from pedrec.models.experiments.experiment_round_description import ExperimentRoundDescription
 from pedrec.models.constants.skeleton_pedrec import SKELETON_PEDREC_JOINT as J
+from pedrec.networks.net_pedrec.pedrec_convention_adapter import NO_CONVENTION
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet, PedRecNetLossHead
 from pedrec.networks.net_pedrec.pedrec_net_mtl_wrapper import PedRecNetMTLWrapper
 from pedrec.training.experiments.experiment_dataset_helper import get_validation_sets, get_train_loader
@@ -36,7 +37,8 @@ from pedrec.training.experiments.experiment_initializer import initialize_weight
 from pedrec.training.experiments.experiment_log_helper import get_experiment_protocol, save_log
 from pedrec.training.experiments.experiment_path_helper import get_experiment_paths
 from pedrec.training.experiments.checkpoint_selection import BestEpochTracker
-from pedrec.training.experiments.experiment_train_helper import init_experiment, train_round, get_outputs_loss_mtl
+from pedrec.training.experiments.experiment_train_helper import init_experiment, train_round, get_outputs_loss_mtl, \
+    validate_val_sets
 from pedrec.training.experiments.train_stepper import TrainingOptions, TrainStepper, steps_per_epoch
 from pedrec.training.experiments.pedrec_stages import PedRecTrainingStage, get_stage, get_stage_chain, \
     format_stage_table, IMAGENET_INIT, STAGES, DEFAULT_STAGE
@@ -258,6 +260,61 @@ class StageState:
         os.replace(tmp, self.path)
 
 
+def log_validation_diagnostics(net, validation_results):
+    """MTL weights, learned joint conventions and the systematic 2D / 3D errors per validation set."""
+    log_vars = net.loss_head.log_vars.detach().cpu().tolist()
+    logger.info("MTL log variances (2D, 3D, orientation, conf): " + ", ".join(f"{v:.2f}" for v in log_vars) +
+                f" (bounds [{net.loss_head.LOG_VAR_MIN}, {net.loss_head.LOG_VAR_MAX}])")
+    if net.loss_head.convention_adapter is not None:
+        for line in net.loss_head.convention_adapter.describe():
+            logger.info(f"Joint convention {line}")
+    # systematic 3D offsets; SIM (canonical skeleton) should stay close to 0, else the canonical skeleton drifts
+    for set_name, set_results in validation_results.items():
+        if set_results.pose2d_pck is not None and set_results.pose2d_pck.joint_bias_body is not None:
+            logger.info(f"{set_name} 2D bias (median pred - GT): "
+                        f"{format_joint_bias(set_results.pose2d_pck.joint_bias_body, '% torso', 1.0)}")
+        if set_results.pose3d is not None:
+            pose3d = set_results.pose3d
+            if pose3d.joint_bias_body is not None:
+                logger.info(f"{set_name} 3D bias (median pred - GT): {format_joint_bias(pose3d.joint_bias_body)}")
+            # mean absolute error per camera axis: which part of the MPJPE is depth
+            axes = [np.nanmean(d) for d in (pose3d.mean_joint_x_distances, pose3d.mean_joint_y_distances,
+                                            pose3d.mean_joint_depth_distances)]
+            logger.info(f"{set_name} 3D error per axis: x {axes[0]:.1f} | y {axes[1]:.1f} | depth {axes[2]:.1f} mm "
+                        f"(MPJPE {pose3d.mpjpe_mean:.1f})")
+
+
+def validate_canonical(net, validation_sets, device, input_size):
+    """
+    Validation of the sets with an own joint convention WITHOUT the convention adapter: the canonical poses the
+    inference network (demo, lifter, eval scripts) outputs. Empty without adapter (then identical to the validation).
+    """
+    sets = [val_set for val_set in validation_sets
+            if getattr(val_set.loader.dataset, "convention", NO_CONVENTION) != NO_CONVENTION]
+    if not sets or net.loss_head.convention_adapter is None:
+        return {}
+    net.adapt_eval_outputs = False
+    try:
+        return validate_val_sets(net, sets, get_outputs_loss_mtl, get_preds_mtl, device, input_size)
+    finally:
+        net.adapt_eval_outputs = True
+
+
+def log_canonical_results(canonical_results, validation_results):
+    """Canonical (no adapter) vs. (adapted) PCK@0.05 / MPJPE per set: large gaps = the canonical skeleton drifts."""
+    terms = []
+    for set_name, canonical in canonical_results.items():
+        adapted = validation_results[set_name]
+        term = set_name
+        if canonical.pose2d_pck is not None and adapted.pose2d_pck is not None:
+            term += f" PCK@0.05 {canonical.pose2d_pck.pck_05_mean:.2f} ({adapted.pose2d_pck.pck_05_mean:.2f})"
+        if canonical.pose3d is not None and adapted.pose3d is not None:
+            term += f" MPJPE {canonical.pose3d.mpjpe_mean:.1f} ({adapted.pose3d.mpjpe_mean:.1f})"
+        terms.append(term)
+    if terms:
+        logger.info("Canonical (no adapter): " + " | ".join(terms))
+
+
 def _final_weights(net, ema):
     return (ema.module if ema is not None else net).state_dict()
 
@@ -293,27 +350,12 @@ def run_round(round_idx: int, net, description: ExperimentDescription, params, m
 
     def on_epoch_end(epoch, eval_net, results, stepper):
         name = f"round {round_idx + 1} epoch {epoch + 1}"
-        log_vars = net.loss_head.log_vars.detach().cpu().tolist()
-        logger.info("MTL log variances (2D, 3D, orientation, conf): " + ", ".join(f"{v:.2f}" for v in log_vars) +
-                    f" (bounds [{net.loss_head.LOG_VAR_MIN}, {net.loss_head.LOG_VAR_MAX}])")
-        if net.loss_head.convention_adapter is not None:
-            for line in net.loss_head.convention_adapter.describe():
-                logger.info(f"Joint convention {line}")
-        # systematic 3D offsets; SIM (canonical skeleton) should stay close to 0, else the canonical skeleton drifts
-        for set_name, set_results in results.validation_results.items():
-            if set_results.pose2d_pck is not None and set_results.pose2d_pck.joint_bias_body is not None:
-                logger.info(f"{set_name} 2D bias (median pred - GT): "
-                            f"{format_joint_bias(set_results.pose2d_pck.joint_bias_body, '% torso', 1.0)}")
-            if set_results.pose3d is not None:
-                pose3d = set_results.pose3d
-                if pose3d.joint_bias_body is not None:
-                    logger.info(f"{set_name} 3D bias (median pred - GT): {format_joint_bias(pose3d.joint_bias_body)}")
-                # mean absolute error per camera axis: which part of the MPJPE is depth
-                axes = [np.nanmean(d) for d in (pose3d.mean_joint_x_distances, pose3d.mean_joint_y_distances,
-                                                pose3d.mean_joint_depth_distances)]
-                logger.info(f"{set_name} 3D error per axis: x {axes[0]:.1f} | y {axes[1]:.1f} | depth {axes[2]:.1f} mm "
-                            f"(MPJPE {pose3d.mpjpe_mean:.1f})")
-        if stage_state.best.update(results.validation_results, name):
+        log_validation_diagnostics(net, results.validation_results)
+        canonical_results = validate_canonical(eval_net, validation_sets, device,
+                                               description.net_cfg.model.input_size)
+        log_canonical_results(canonical_results, results.validation_results)
+        # the best epoch is selected on the canonical poses (deployed network) of the sets with an own convention
+        if stage_state.best.update({**results.validation_results, **canonical_results}, name):
             torch.save(eval_net.state_dict(), best_checkpoint_path)
             logger.info(f"New best epoch ({name}, relative score {stage_state.best.best_score:.4f}): "
                         f"{best_checkpoint_path}")

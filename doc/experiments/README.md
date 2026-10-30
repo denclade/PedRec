@@ -56,42 +56,52 @@ the log) is overwritten by its protocol once it is finished.
 * **Training validation vs. eval**: the validation during training uses subsampled sets (H36M every 64th frame) and GT
   boxes; `eval` rows come from the evaluation scripts. Compare like with like (v1 H36M: 64.4 mm validation vs. 55.0 mm
   eval for the same network).
+* **Canonical vs. adapted 3D (`v2-2026-10-28`)**: the training validation of this run maps the prediction to each
+  dataset's convention with the convention adapter. Its root row took 86 % of the hip mean (free, the canonical root
+  is the hip mean), so the canonical skeleton drifted ~20 cm from its root on studio images: H36M 74.8 mm adapted vs.
+  236.3 mm canonical (`eval:h36m`). The 3D values of this run describe the adapted, not the deployed network. Since the
+  fix (root adapts only along the spine) the training also logs the canonical results ("Canonical (no adapter)") and
+  selects the best epoch on them.
+* **Joints in MPJPE**: the training validation averages all 21 joints with H36M labels incl. hand / foot ends (v1 too),
+  `eval:h36m` the standard 17 joints. `v2-2026-10-28` R2E39 adapted: 74.8 mm (21) / 66.2 mm (17).
 * **v1 reference network**: `p2d3d_c_o_h36m_sim_mebow` (demo, SIM-C01 results of the lifter / action recognition).
 
 ## Summary (state 2026-10-29)
 
-`v2-2026-10-28` is in progress: p2d_c from the log at round 2 epoch 43 of 60, p2d3d_c_o at round 2 epoch 3 of 40.
+`v2-2026-10-28` is finished (p2d_c R2E60, p2d3d_c_o R2E40). The best checkpoint of p2d3d_c_o is R2E39
+(`experiment_pedrec_v2_p2d3d_c_o_0_best.pth`), R2E40 differs by at most 0.1 in every metric. H36M MPJPE is flat from
+~R2E25 on (74.6-74.9 mm), SIM / Fit3D / AIST++ still improve slightly until the end.
 
 ### 2D (training validation)
 
-| Metric | v1 p2d_c (COCO only) | v1 reference (mebow) | v2-10-23 p2d_c | v2-10-23 p2d3d_c_o R2E28 | v2-10-28 p2d_c R2E43 | v2-10-28 p2d3d_c_o R2E3 |
+| Metric | v1 p2d_c (COCO only) | v1 reference (mebow) | v2-10-23 p2d_c | v2-10-23 p2d3d_c_o R2E28 | v2-10-28 p2d_c R2E60 | v2-10-28 p2d3d_c_o R2E39 |
 | --- | --- | --- | --- | --- | --- | --- |
-| COCO PCK@0.05 | 56.44 | 53.72 | 55.11 | 54.65 | 56.21 | 56.11 |
-| COCO PCK@0.2 | 92.68 | 91.88 | 92.15 | 92.05 | 92.58 | 92.81 |
-| H36M PCK@0.05 | 17.64 | 61.23 | 65.30 | 64.63 | 64.13 | 63.40 |
-| H36M PCK@0.2 | 53.17 | 92.66 | 93.72 | 93.69 | 93.66 | 93.61 |
-| Fit3D PCK@0.05 | - | - | 43.32 ¹ | 43.63 ¹ | 53.68 | 54.22 |
-| AIST++ PCK@0.05 | - | - | 72.93 | 72.36 | 72.58 | 72.66 |
-| SIM PCK@0.05 | (30.15) ² | 97.12 ² | 99.35 ² | 98.16 ² | 67.69 | 67.32 |
+| COCO PCK@0.05 | 56.44 | 53.72 | 55.11 | 54.65 | 56.82 | 55.70 |
+| COCO PCK@0.2 | 92.68 | 91.88 | 92.15 | 92.05 | 92.90 | 92.46 |
+| H36M PCK@0.05 | 17.64 | 61.23 | 65.30 | 64.63 | 63.71 | 63.28 |
+| H36M PCK@0.2 | 53.17 | 92.66 | 93.72 | 93.69 | 93.64 | 93.60 |
+| Fit3D PCK@0.05 | - | - | 43.32 ¹ | 43.63 ¹ | 54.04 | 55.00 |
+| AIST++ PCK@0.05 | - | - | 72.93 | 72.36 | 72.94 | 72.28 |
+| SIM PCK@0.05 | (30.15) ² | 97.12 ² | 99.35 ² | 98.16 ² | 67.61 | 66.90 |
 
 ### 3D and orientation (training validation)
 
-| Metric | v1 reference (mebow) | v1 without MEBOW | v2-10-23 p2d3d_c_o R2E28 | v2-10-28 p2d3d_c_o R2E3 |
+| Metric | v1 reference (mebow) | v1 without MEBOW | v2-10-23 p2d3d_c_o R2E28 | v2-10-28 p2d3d_c_o R2E39 |
 | --- | --- | --- | --- | --- |
-| H36M MPJPE mm | 64.37 | 64.50 | 87.74 | 79.9 ³ |
-| H36M PCJP / PCD | 0.80 / 0.92 | 0.79 / 0.92 | 0.73 / 0.90 | 0.75 / 0.90 |
-| Fit3D MPJPE mm | - | - | 65.38 ¹ | 63.4 ³ |
-| AIST++ MPJPE mm | - | - | 82.73 | 73.9 ³ |
-| SIM MPJPE mm | 15.13 ² | 17.69 ² | 56.42 ² | 74.1 |
-| COCO body phi ° (MEBOW) | 10.3 | 16.0 | 9.7 | 10.2 |
-| SIM body / head phi ° | 2.3 / 3.4 ² | 4.6 / 3.4 ² | 3.4 / 4.0 ² | 6.5 / 7.8 |
+| H36M MPJPE mm | 64.37 | 64.50 | 87.74 | 74.78 ³ |
+| H36M PCJP / PCD | 0.80 / 0.92 | 0.79 / 0.92 | 0.73 / 0.90 | 0.77 / 0.91 |
+| Fit3D MPJPE mm | - | - | 65.38 ¹ | 55.38 ³ |
+| AIST++ MPJPE mm | - | - | 82.73 | 68.25 ³ |
+| SIM MPJPE mm | 15.13 ² | 17.69 ² | 56.42 ² | 65.73 |
+| COCO body phi ° (MEBOW) | 10.3 | 16.0 | 9.7 | 9.2 |
+| SIM body / head phi ° | 2.3 / 3.4 ² | 4.6 / 3.4 ² | 3.4 / 4.0 ² | 4.6 / 4.6 |
 
 ### Evaluation scripts (`mise run eval:*`)
 
 | Metric | v1 p2d_c | v1 without MEBOW | v1 reference (mebow) | v2 |
 | --- | --- | --- | --- | --- |
 | COCO AP | 70.4 | 67.1 | 67.6 | not evaluated yet |
-| H36M MPJPE mm | - | 55.10 | 54.95 | not evaluated yet |
+| H36M MPJPE mm | - | 55.10 | 54.95 | 236.3 (`v2-2026-10-28`, canonical, see above) |
 | MEBOW body phi mean ° / Acc22.5 % | - | 16.0 / 80.5 | 10.1 / 91.7 | not evaluated yet |
 | TUD body phi mean ° | - | 15.9 | 14.4 | not evaluated yet |
 

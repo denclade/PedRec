@@ -14,7 +14,13 @@ with rotation, translation, scaling and the affine 2D crop transforms). Only def
 hand / foot ends) may move, and only towards their neighbours; knees, ankles, elbows and wrists are anatomically well
 defined (their spread within SIM is as large as between the datasets: body proportions, not conventions) and stay
 fixed, so the adapter cannot learn body proportions. W is left / right symmetric (flip augmentation), SIM and samples
-without convention (-1) use the identity. After the mapping the 3D pose is moved back to the predicted root.
+without convention (-1) use the identity.
+
+The root (hip center) moves only along the spine (a different pelvis definition = all other joints shifted against the
+root, as the 3D pose is moved back to the predicted root after the mapping). It must not take offsets from the hips:
+the canonical root IS the hip mean, such weights cost nothing on correct poses but make the loss nearly invariant to a
+shift of all other joints against the root (v2-2026-10-28: H36M root <- 0.86 * hip mean, the canonical skeleton drifted
+~20 cm from its root on studio images, 206 mm canonical vs. 64 mm adapted MPJPE).
 """
 from typing import List
 
@@ -34,6 +40,7 @@ _HEAD = [J.nose, J.left_eye, J.right_eye, J.left_ear, J.right_ear, J.head_lower,
 _SOURCES = {joint: _TORSO for joint in _TORSO}
 _SOURCES.update({joint: _HEAD for joint in [J.nose, J.left_eye, J.right_eye, J.left_ear, J.right_ear, J.head_lower,
                                             J.head_upper]})
+_SOURCES[J.hip_center] = [J.spine_center, J.neck]  # not the hips, see module docstring
 _SOURCES.update({
     J.left_foot_end: [J.left_ankle, J.left_knee], J.right_foot_end: [J.right_ankle, J.right_knee],
     J.left_hand_end: [J.left_wrist, J.left_elbow], J.right_hand_end: [J.right_wrist, J.right_elbow],
