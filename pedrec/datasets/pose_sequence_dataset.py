@@ -22,6 +22,8 @@ from pedrec.utils.pedrec_dataset_helper import get_filter_skeleton2d, get_filter
 
 logger = logging.getLogger(__name__)
 NUM_JOINTS = len(SKELETON_PEDREC_JOINTS)
+PREDICTION, NOISY_GT, CLEAN_GT = 0, 1, 2
+SOURCE_NAMES = ("prediction", "noisy_gt", "clean_gt")
 
 
 @dataclass
@@ -37,7 +39,8 @@ class SequenceNoiseConfig:
 class PoseSequenceDataset(Dataset):
     def __init__(self, df_path: str, results_df_path: Optional[str] = None, window: int = WINDOW, train: bool = True,
                  gt_result_ratio: float = 0.5, max_stride: int = 2, target_step: int = 1,
-                 noise: SequenceNoiseConfig = None, seed: int = 0):
+                 noise: SequenceNoiseConfig = None, seed: int = 0, convention: int = -1,
+                 return_metadata: bool = False, source: Optional[int] = None):
         """
         :param results_df_path: PedRecNet predictions with the same index as ``df_path`` (rows of invalid frames 0)
         :param gt_result_ratio: training: probability to use the (noisy) ground truth instead of the predictions
@@ -50,6 +53,9 @@ class PoseSequenceDataset(Dataset):
         self.max_stride = max_stride if train else 1
         self.noise = noise or SequenceNoiseConfig()
         self.seed = seed
+        self.convention = convention
+        self.return_metadata = return_metadata
+        self.source = source
         self._rng = None
         self._rng_owner = None
 
@@ -60,17 +66,31 @@ class PoseSequenceDataset(Dataset):
         visible_2d = self.skeleton_2d[:, :, 3].sum(axis=1)
         supported_3d = self.skeleton_3d[:, :, 5].sum(axis=1)
         self.valid_gt = (visible_2d >= 3) & (supported_3d >= NUM_JOINTS // 2) & (self.bbs[:, 2] > 1) & (self.bbs[:, 3] > 1)
+        self.valid_gt &= np.isfinite(self.skeleton_3d[:, :, :3]).all(axis=(1, 2))
+        self.valid_gt &= np.isfinite(self.bbs).all(axis=1) & (self.bbs[:, 4] >= 1)
 
         self.result_2d = self.result_3d = None
         self.valid_result = np.zeros(len(df), dtype=bool)
+        self.result_positions = np.full(len(df), -1, dtype=np.int64)
         if results_df_path is not None:
             results = read_pedrec_df(results_df_path)
-            if len(results) != len(df):
+            if "original_index" in results:
+                rows = results["original_index"].to_numpy()
+                if not np.isfinite(rows).all() or not np.equal(rows, rows.astype(np.int64)).all():
+                    raise ValueError(f"{results_df_path}: original_index must contain integer row positions")
+                rows = rows.astype(np.int64)
+                if len(np.unique(rows)) != len(rows) or np.any(rows < 0) or np.any(rows >= len(df)):
+                    raise ValueError(f"{results_df_path}: duplicate or out-of-range original_index")
+            elif len(results) == len(df):
+                rows = np.arange(len(df))
+            else:
                 raise ValueError(f"{results_df_path} has {len(results)} rows, {df_path} {len(df)}; the result "
-                                 f"dataframe has to share the index (use the *_allframes.pkl files)")
-            self.result_2d = results[get_filter_skeleton2d(results)].to_numpy(np.float32).reshape(len(df), NUM_JOINTS, 5)
-            self.result_3d = results[get_filter_skeleton3d(results)].to_numpy(np.float32).reshape(len(df), NUM_JOINTS, 6)
-            self.valid_result = np.abs(self.result_3d[:, :, :3]).sum(axis=(1, 2)) > 0
+                                 "dataframe needs explicit original_index for sparse predictions")
+            self.result_2d = results[get_filter_skeleton2d(results)].to_numpy(np.float32).reshape(len(results), NUM_JOINTS, 5)
+            self.result_3d = results[get_filter_skeleton3d(results)].to_numpy(np.float32).reshape(len(results), NUM_JOINTS, 6)
+            self.result_positions[rows] = np.arange(len(results))
+            finite = np.isfinite(self.result_2d).all(axis=(1, 2)) & np.isfinite(self.result_3d).all(axis=(1, 2))
+            self.valid_result[rows] = finite & (np.abs(self.result_3d[:, :, :3]).sum(axis=(1, 2)) > 0)
 
         # sequences: rows of the same scene and camera, ordered by frame number
         order = np.lexsort((df["frame_nr_local"].to_numpy(), df["img_dir"].astype(str).to_numpy(),
@@ -81,6 +101,8 @@ class PoseSequenceDataset(Dataset):
         self.sequence_start = np.repeat(starts, np.diff(np.r_[starts, len(order)]))  # position -> first position
         targets = np.flatnonzero(self.valid_gt[order])
         self.targets = targets[::max(1, target_step)]
+        if source == PREDICTION:
+            self.targets = self.targets[self.valid_result[order[self.targets]]]
         logger.info(f"{df_path}: {len(starts)} sequences, {len(self.targets)} targets"
                     + (f", predictions for {self.valid_result.mean():.0%} of the frames" if results_df_path else ""))
 
@@ -100,17 +122,16 @@ class PoseSequenceDataset(Dataset):
         positions = position - stride * np.arange(self.window - 1, -1, -1)
         positions = np.maximum(positions, self.sequence_start[position])  # pad with the first frame of the sequence
         rows = self.order[positions]
-        # frames without input (person not detected / not visible): repeat the last valid frame before them
-        last = rows[-1]
-        for i in range(len(rows) - 1, -1, -1):
+        # Match causal inference: fill internal gaps with the PREVIOUS known pose.
+        known = np.flatnonzero(valid[rows])
+        if not len(known):
+            raise ValueError("Sequence window contains no valid input")
+        last = rows[known[0]]  # leading padding repeats the first available pose
+        for i in range(len(rows)):
             if valid[rows[i]]:
                 last = rows[i]
             else:
                 rows[i] = last
-        for i in range(len(rows)):  # leading invalid frames: first valid frame
-            if valid[rows[i]]:
-                rows[:i] = rows[i]
-                break
         return rows
 
     def _noisy_gt(self, rows: np.ndarray, rng: np.random.Generator) -> np.ndarray:
@@ -129,19 +150,84 @@ class PoseSequenceDataset(Dataset):
         features[outliers, 2] *= rng.uniform(0, 0.5, size=outliers.sum())
         return features.astype(np.float32)
 
-    def __getitem__(self, idx):
+    def get_sample(self, idx, source=None):
         position = self.targets[idx]
         target_row = self.order[position]
         rng = self.rng if self.train else np.random.default_rng([self.seed, int(idx)])
         stride = int(rng.integers(1, self.max_stride + 1)) if self.max_stride > 1 else 1
-        use_result = self.result_3d is not None and self.valid_result[target_row] and \
-            (not self.train or rng.random() >= self.gt_result_ratio)
-        if use_result:
+        if source is None:
+            source = self.source
+        if source is None:
+            use_result = self.result_3d is not None and self.valid_result[target_row] and \
+                (not self.train or rng.random() >= self.gt_result_ratio)
+            source = PREDICTION if use_result else NOISY_GT
+        if source == PREDICTION:
+            if not self.valid_result[target_row]:
+                raise ValueError("Prediction source requested for a target without predictions")
             rows = self._window_rows(position, stride, self.valid_result)
-            features = lifter_features(self.result_2d[rows], self.result_3d[rows], self.bbs[rows])
+            positions = self.result_positions[rows]
+            features = lifter_features(self.result_2d[positions], self.result_3d[positions], self.bbs[rows])
         else:
             rows = self._window_rows(position, stride, self.valid_gt)
-            features = self._noisy_gt(rows, rng)
+            if source == CLEAN_GT:
+                features = lifter_features(self.skeleton_2d[rows], self.skeleton_3d[rows], self.bbs[rows])
+            elif source == NOISY_GT:
+                features = self._noisy_gt(rows, rng)
+            else:
+                raise ValueError(f"Unknown lifter input source: {source}")
         target = self.skeleton_3d[target_row, :, :3] / SKELETON_3D_RANGE
         mask = self.skeleton_3d[target_row, :, 5].astype(np.float32)
-        return features, target.astype(np.float32), mask
+        result = features, target.astype(np.float32), mask
+        if self.return_metadata:
+            # GT/noise are native-convention denoising/identity pairs; only real
+            # canonical predictions need conversion for comparison with native GT.
+            return (*result, {"source": source, "convention": self.convention if source == PREDICTION else -1})
+        return result
+
+    def __getitem__(self, idx):
+        return self.get_sample(idx)
+
+
+class LifterTrainingMixture(Dataset):
+    """Source-first sampling so abundant AMASS/GT frames cannot drown real predictions.
+
+    Within a source, sample datasets uniformly (then a target uniformly). Base
+    sequence arrays are shared; no threefold copy of the large datasets or
+    per-target sampler weights is required. Ratios are global probabilities.
+    """
+
+    def __init__(self, datasets, prediction_ratio=0.5, clean_gt_ratio=0.1, samples_per_epoch=None):
+        self.datasets = datasets
+        ratios = np.array([prediction_ratio, clean_gt_ratio])
+        if not np.isfinite(ratios).all() or (ratios < 0).any() or ratios.sum() > 1 + 1e-12:
+            raise ValueError("prediction_ratio and clean_gt_ratio must be nonnegative and sum to at most 1")
+        self.probabilities = np.array([prediction_ratio, max(0, 1 - ratios.sum()), clean_gt_ratio])
+        self.probabilities /= self.probabilities.sum()
+        self.prediction_targets = [np.flatnonzero(d.valid_result[d.order[d.targets]]) for d in datasets]
+        self.prediction_sets = [i for i, targets in enumerate(self.prediction_targets) if len(targets)]
+        self.gt_sets = [i for i, dataset in enumerate(datasets) if len(dataset)]
+        if not self.gt_sets:
+            raise ValueError("No valid training targets")
+        if prediction_ratio > 0 and not self.prediction_sets:
+            raise ValueError("No real prediction targets; run mise run train:lifter:data first, or set --prediction-ratio 0")
+        self.length = sum(len(d) for d in datasets) if samples_per_epoch is None else samples_per_epoch
+        if self.length < 1:
+            raise ValueError("samples_per_epoch must be positive")
+        self._rng, self._owner = None, None
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, _):
+        owner = torch.initial_seed()
+        if self._rng is None or owner != self._owner:
+            self._rng, self._owner = np.random.default_rng(owner), owner
+        rng = self._rng
+        source = int(rng.choice(3, p=self.probabilities))
+        dataset_id = int(rng.choice(self.prediction_sets if source == PREDICTION else self.gt_sets))
+        dataset = self.datasets[dataset_id]
+        if source == PREDICTION:
+            target = int(rng.choice(self.prediction_targets[dataset_id]))
+        else:
+            target = int(rng.integers(len(dataset)))
+        return dataset.get_sample(target, source)

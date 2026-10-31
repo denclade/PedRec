@@ -38,7 +38,7 @@ def lift_results(df_path: str, results_path: str, output_path: str, lifter: torc
     for features, _, _ in DataLoader(Subset(dataset, indices), batch_size=batch_size):
         pred = lifter(features.to(device)).float().cpu().numpy() * SKELETON_3D_RANGE
         rows = dataset.order[dataset.targets[indices[offset:offset + len(pred)]]]
-        lifted[rows, :, :3] = pred
+        lifted[dataset.result_positions[rows], :, :3] = pred
         offset += len(pred)
     results = read_pedrec_df(results_path)
     columns = get_filter_skeleton3d(results)

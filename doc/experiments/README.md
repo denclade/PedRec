@@ -9,6 +9,8 @@ All validation results of PedRecNet v1 / v2 that are compared against each other
 | --- | --- |
 | [results.csv](results.csv) | `run, model, stage, checkpoint, dataset, metric, value, note` |
 | [../../pedrec/tools/experiments/collect_results.py](../../pedrec/tools/experiments/collect_results.py) | imports training protocols, prints comparison tables |
+| [../../notebooks/pelvis_consistency.ipynb](../../notebooks/pelvis_consistency.ipynb) | paired canonical pelvis diagnostics on real validation images, orientation error distributions |
+| [v2_assessment_2026-10-31.md](v2_assessment_2026-10-31.md) | v1/v2 architecture assessment, comparability and next controlled experiments |
 
 Columns:
 

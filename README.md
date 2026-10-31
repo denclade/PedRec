@@ -228,16 +228,18 @@ exactly once per frame. The batched path is tested against a plain OpenCV implem
 
 ```bash
 mise run train:list                       # stage table
-mise run train:pedrec:2d                  # stage p2d_c: 2D pose + joint confidence, backbone from ImageNet
-mise run train:pedrec:full                # stage p2d3d_c_o: + 3D pose + orientation (demo network)
-mise run tools:extract-net --stage p2d3d_c_o
-mise run train:lifter:data                # PedRecNet results on SIM-C01 (input of the lifter training)
+mise run train:pedrec:chain               # p2d_c -> p2d3d_c_o; skips completed stages, resumes interrupted ones
+mise run tools:extract-net --stage p2d3d_c_o  # export final PedRecNet weights for the demo
+mise run train:lifter:data                # current 2D/3D predictions on all available lifter image datasets
 mise run train:lifter                     # temporal 3D lifter
 mise run train:ehpi3d:data                # SIM-C01 results with the lifted 3D poses
 mise run train:ehpi3d                     # action recognition (ST-GCN)
 ```
 
 ## PedRecNet
+To train only one stage, use `mise run train:pedrec:2d` or `mise run train:pedrec:full` (requires the 2D checkpoint).
+`mise run train:pedrec:chain p2d3d_c_o --fresh` archives the previous stage outputs and retrains both stages.
+
 Two stages (`pedrec/training/experiments/pedrec_stages.py`): `p2d_c` trains the neck and the 2D / confidence heads on
 COCO, Human3.6m and SIM starting from the ImageNet backbone, `p2d3d_c_o` adds the 3D pose and the orientations (COCO
 with the MEBOW labels). Each stage trains two rounds (frozen backbone, then the full network), writes
@@ -296,11 +298,44 @@ the mean relative improvement of all validation metrics (PCK, MPJPE, joint accur
 the first epoch. A warning is logged if more than half of the optimizer steps are clipped.
 
 ## Temporal 3D lifter
-`pedrec/training/train_lifter.py` trains the causal lifter on 3D ground truth sequences of Human3.6m, SIM-ROM and
-SIM-C01 (only the dataframes are needed). Inputs are the PedRecNet predictions where available (SIM-C01 results of
-`train:lifter:data`) and otherwise the ground truth with noise that imitates the per frame errors. Every epoch reports
-the 3D error (MPJPE) of the per frame PedRecNet poses and of the lifted poses per validation set; the best epoch is
-saved, and a warning is logged if the lifter does not improve on the per frame poses.
+Run `mise run train:lifter:data` after training PedRecNet. It generates canonical 2D/3D predictions from the current
+final `p2d3d_c_o` checkpoint on available images of **Human3.6m, SIM-ROM, SIM-Circle, SIM-C01, MPI-INF-3DHP, Fit3D and
+AIST++**, for their available train/val splits. It uses the annotated person boxes, without detector/tracker or
+training augmentation. Sequence frames without extracted images are skipped. AMASS has no RGB images and remains
+a source of GT-based inputs. Dataframes without valid annotations are not useful validation sets.
+
+```bash
+mise run train:lifter:data                       # regenerate all available image datasets, train + val
+mise run train:lifter:data --datasets h36m fit3d  # regenerate only selected datasets
+mise run train:lifter --prediction-ratio 0.5 --clean-gt-ratio 0.1
+```
+
+The result writer stores explicit positional row IDs for alignment to the full sequence dataframes. Additional
+datasets use sparse `<sequence-name>_predictions.pkl` files; SIM-C01 keeps the dense `*_allframes.pkl` filenames
+needed by EHPI3D. A JSON sidecar records the pose-weight hash and sequence-file signature. Training rejects these
+new result files if the pose weights or source dataframe changed; regenerate the affected predictions. Older
+result files without a sidecar are accepted with a provenance warning.
+
+`pedrec/training/train_lifter.py` consumes the prepared dataframes, without reading images. The default global
+input mixture is **50% real predictions, 40% noisy GT, 10% unchanged GT**, configurable with `--prediction-ratio`
+and `--clean-gt-ratio`. Datasets are sampled uniformly within each input source; large AMASS/AIST++ sets therefore
+do not dilute the configured prediction share. Only targets with actual predictions are eligible for the
+prediction source. With no predictions, generate them first or explicitly select `--prediction-ratio 0`.
+`--gt-result-ratio` remains an alias for `1 - prediction_ratio`; the clean-GT share must fit within the GT share.
+`--samples-per-epoch` can limit the training budget (default: sum of available GT targets).
+
+**Joint conventions:** prediction inputs and runtime outputs remain canonical. For their training loss and
+validation, the lifter output is mapped to the dataset's GT convention using the frozen adapter from the matching
+PedRecNet MTL checkpoint (`--pose-weights`, default final `p2d3d_c_o`). The adapter is not retrained or exported into
+the lifter. Clean/noisy GT inputs stay in their native convention and use a direct identity/denoising loss against
+that same GT; no inverse of the learned adapter is used.
+
+Each epoch labels validation inputs as `[pred]` (only real predictions) or `[GT+noise]` (synthetic inputs), and
+logs the actual training input counts. Empty validation sets are skipped instead of reporting `0 -> 0 mm`.
+The best checkpoint minimizes the mean lifted/input error ratio across real-prediction validation sets; if none
+exist, it uses the synthetic-noise sets with an explicit warning. The model state dict remains compatible with the
+demo; `<lifter.pth>.json` records the selected epoch, mixture, matching pose-weight hash and validation results.
+After retraining the lifter, rerun `train:ehpi3d:data` before training EHPI3D.
 
 ## Action recognition (ST-GCN on EHPI sequences)
 ```bash

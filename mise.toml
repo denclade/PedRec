@@ -235,16 +235,11 @@ description = "Train the second stage: + 3D pose + orientation (COCO MEBOW + Hum
 run = "python pedrec/training/train_pedrec.py --stage p2d3d_c_o"
 
 [tasks."train:lifter:data"]
-description = "PedRecNet results on SIM-C01 train + val, expanded to all frames (input of the 3D lifter training)"
-run = [
-    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split train",
-    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split train",
-    "python pedrec/tools/resultwriters/sim_c01_to_results.py --split val",
-    "python pedrec/tools/resultwriters/v5_write_results_allframes.py --split val",
-]
+description = "Canonical 2D/3D predictions on available images of all lifter datasets, train + val; --datasets h36m fit3d ..."
+run = "python pedrec/tools/resultwriters/lifter_to_results.py"
 
 [tasks."train:lifter"]
-description = "Train the temporal 3D lifter on Human3.6m / SIM-ROM / SIM-C01 sequences (only dataframes needed)"
+description = "Train the temporal lifter on real predictions, noisy GT and clean GT (source/dataset balanced)"
 run = "python pedrec/training/train_lifter.py"
 
 [tasks."train:ehpi3d:list"]
