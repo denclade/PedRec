@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from pedrec.tracking.byte_tracker import ByteTracker
+from pedrec.tracking.byte_tracker import ByteTracker, linear_assignment
 from pedrec.tracking.one_euro import OneEuroFilter, HumanStateSmoother
 
 
@@ -35,6 +35,34 @@ def test_bytetrack_low_score_and_occlusion_recovery():
 def test_bytetrack_no_new_track_for_low_scores():
     tracker = ByteTracker(high_thresh=0.6, low_thresh=0.1, new_track_thresh=0.6)
     assert tracker.update(np.array([_bb(100, 300)]), np.array([0.3])).assignments == {}
+
+
+def test_assignment_gates_invalid_pairs_before_optimization():
+    # Ungated Hungarian selects both 0.2 entries and discards them, losing the valid 0.1 association.
+    matches, unmatched_tracks, unmatched_detections = linear_assignment(np.array([[0.1, 0.2], [0.2, 1.0]]), 0.15)
+    assert matches == [(0, 0)]
+    assert unmatched_tracks == [1]
+    assert unmatched_detections == [1]
+
+
+def test_bytetrack_duplicate_detections_do_not_create_new_id():
+    tracker = ByteTracker(new_track_thresh=0.6)
+    uid = tracker.update(np.array([_bb(100, 300)]), np.array([0.9])).assignments[0]
+    for frame in range(10):
+        x = 100 + frame
+        # Lower-scoring duplicate comes first: assignments must preserve original detection indices.
+        result = tracker.update(np.array([_bb(x + 1, 300), _bb(x, 300)]), np.array([0.8, 0.95]), ['dup', 'real'])
+        assert result.assignments == {1: uid}
+        assert len(tracker.tracks) == 1
+        assert tracker.tracks[0].payload == 'real'
+    assert tracker.next_uid == 1
+
+
+def test_bytetrack_keeps_two_distinct_overlapping_persons():
+    tracker = ByteTracker(new_track_thresh=0.6)
+    for frame in range(10):
+        result = tracker.update(np.array([_bb(100 + frame, 300), _bb(125 + frame, 300)]), np.array([0.9, 0.8]))
+        assert result.assignments == {0: 0, 1: 1}
 
 
 def test_one_euro_reduces_jitter():

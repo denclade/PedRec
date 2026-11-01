@@ -96,7 +96,9 @@ def iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 def linear_assignment(cost: np.ndarray, thresh: float) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
     if cost.size == 0:
         return [], list(range(cost.shape[0])), list(range(cost.shape[1]))
-    rows, cols = linear_sum_assignment(cost)
+    # Gate before solving: invalid pairs must not displace valid associations and then get discarded afterwards.
+    invalid_cost = (min(cost.shape) + 1) * (np.max(np.abs(cost)) + 1)
+    rows, cols = linear_sum_assignment(np.where(cost <= thresh, cost, invalid_cost))
     matches = [(r, c) for r, c in zip(rows, cols) if cost[r, c] <= thresh]
     matched_rows = {r for r, _ in matches}
     matched_cols = {c for _, c in matches}
@@ -134,7 +136,8 @@ class TrackerResult:
 
 class ByteTracker:
     def __init__(self, high_thresh: float = 0.6, low_thresh: float = 0.1, new_track_thresh: float = 0.7,
-                 match_thresh: float = 0.8, low_match_thresh: float = 0.5, max_time_lost: int = 30):
+                 match_thresh: float = 0.8, low_match_thresh: float = 0.5, max_time_lost: int = 30,
+                 duplicate_iou_thresh: float = 0.8):
         """
         :param high_thresh: detections with a score >= high_thresh are used in the first association stage
         :param low_thresh: detections between low_thresh and high_thresh are only used to continue existing tracks
@@ -142,6 +145,7 @@ class ByteTracker:
         :param match_thresh: maximum cost (1 - IoU) for a match in the first stage
         :param low_match_thresh: maximum cost (1 - IoU) for a match in the second stage
         :param max_time_lost: frames a lost track is kept (can be re-identified) before it is removed
+        :param duplicate_iou_thresh: suppress near-identical detection boxes before association (1 disables)
         """
         self.high_thresh = high_thresh
         self.low_thresh = low_thresh
@@ -149,6 +153,7 @@ class ByteTracker:
         self.match_thresh = match_thresh
         self.low_match_thresh = low_match_thresh
         self.max_time_lost = max_time_lost
+        self.duplicate_iou_thresh = duplicate_iou_thresh
         self.kalman = KalmanFilterXYAH()
         self.tracks: List[Track] = []  # active (updated in the last frame)
         self.lost_tracks: List[Track] = []
@@ -187,9 +192,18 @@ class ByteTracker:
         pool = self.tracks + self.lost_tracks
         self._predict(pool)
 
-        high = [i for i, s in enumerate(scores) if s >= self.high_thresh]
-        low = [i for i, s in enumerate(scores) if self.low_thresh <= s < self.high_thresh]
         det_xyxy = center_bbs_to_xyxy(bbs) if len(bbs) else np.zeros((0, 4))
+        # DETR can still produce duplicate person boxes, especially among the low-score recovery candidates.
+        # Keep original detection indices so payloads / pose estimates remain aligned with assignments.
+        keep = []
+        for i in np.argsort(-scores, kind="stable"):
+            if scores[i] < self.low_thresh:
+                continue
+            if keep and np.any(iou_matrix(det_xyxy[i:i + 1], det_xyxy[keep]) > self.duplicate_iou_thresh):
+                continue
+            keep.append(int(i))
+        high = [i for i in keep if scores[i] >= self.high_thresh]
+        low = [i for i in keep if scores[i] < self.high_thresh]
         assignments: Dict[int, int] = {}
 
         # stage 1: all tracks (active + lost) <-> high score detections, IoU fused with the detection score
