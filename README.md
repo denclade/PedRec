@@ -30,7 +30,7 @@ published v1.
 | Multi task loss | learned sigmas | Kendall log variances, clamped |
 | Training augmentation | flip, scale, rotation | + half body, color jitter, random erasing; optional dataset balancing |
 | 3D pose over time | 2 frame mean | causal temporal lifter per track (27 frames, 0.7M parameters) |
-| Tracking | optical flow + pose merging | ByteTrack + One Euro filter (orientations) |
+| Tracking | optical flow + pose merging | ByteTrack + One Euro filter (3D poses and orientations) |
 | Action recognition | ResNet-50 on the EHPI image (167 MMACs) | ST-GCN on the same EHPI input (116 MMACs, 0.2M parameters) |
 
 Pipeline timings on the CPU (4 threads, random weights, 1920 x 1080, 6 persons, median ms per frame, `mise run bench

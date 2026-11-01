@@ -8,6 +8,7 @@ from pedrec.configs.app_config import AppConfig
 from pedrec.configs.pedrec_net_config import PedRecNetConfig
 from pedrec.inference.pipeline import PedRecPipeline, PipelineConfig
 from pedrec.models.data_structures import ImageSize
+from pedrec.models.human import Human
 from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.networks.net_pedrec.pedrec_net import PedRecNet
 from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter
@@ -103,3 +104,27 @@ def test_invalid_stage_combination():
         PipelineConfig(use_pose=False, use_tracking=True, use_action=False).validate()
     with pytest.raises(ValueError):
         PipelineConfig(use_tracking=False, use_lifter=True, use_action=False).validate()
+
+
+@pytest.mark.parametrize("use_lifter", [False, True])
+def test_3d_smoothing_reduces_stationary_jitter_with_or_without_lifter(use_lifter):
+    # Exercise the live postprocessing on a stationary pose with alternating estimation noise.
+    pipeline = PedRecPipeline.__new__(PedRecPipeline)
+    pipeline.cfg = PipelineConfig(source_fps=30, use_lifter=use_lifter)
+    pipeline.lifter = object() if use_lifter else None
+    pipeline.smoothers = {}
+    raw, filtered = [], []
+    for frame in range(60):
+        pose = np.zeros((26, 4), dtype=np.float32)
+        pose[:, 0] = 10.0 if frame % 2 else -10.0
+        pose[:, 3] = 0.9
+        original = pose.copy()
+        human = Human(bb=[], skeleton_2d=None, skeleton_3d=pose,
+                      orientation=np.zeros((2, 2), dtype=np.float32), uid=7)
+        pipeline.smooth([human])
+        raw.append(original[0, 0])
+        filtered.append(human.skeleton_3d[0, 0])
+        np.testing.assert_array_equal(human.skeleton_3d[:, 3], original[:, 3])
+        np.testing.assert_array_equal(pose, original)  # no feedback into raw lifter inputs
+    assert filtered[0] == raw[0]
+    assert np.mean(np.abs(np.diff(filtered[10:]))) < 0.5 * np.mean(np.abs(np.diff(raw[10:])))

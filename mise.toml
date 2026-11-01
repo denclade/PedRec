@@ -141,8 +141,15 @@ description = "Qt demo (detection, pose, orientation, tracking, actions) on the 
 run = "python pedrec/demo.py"
 
 [tasks."demo:video"]
-description = "Qt demo on a video file: mise run demo:video <file>"
-run = 'python pedrec/demo.py --video "{{arg(name="video")}}"'
+description = "Qt demo on a video file: mise run demo:video <file> [demo options]"
+raw_args = true
+run = '''
+#!/usr/bin/env bash
+set -eu
+video="${1:?Usage: mise run demo:video <file> [demo options]}"
+shift
+exec python pedrec/demo.py --video "$video" "$@"
+'''
 
 [tasks."demo:images"]
 description = "Qt demo on an image sequence directory: mise run demo:images <dir>"

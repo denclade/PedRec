@@ -2,7 +2,7 @@
 PedRec inference pipeline:
 
     RT-DETRv2 detector -> PedRecNet (2D / 3D pose, orientation, joint confidence) -> ByteTrack
-    -> temporal 3D lifter (per track, causal) + One Euro smoothing of the orientations -> ST-GCN action recognition
+    -> temporal 3D lifter (per track, causal) -> One Euro smoothing of 3D poses / orientations -> ST-GCN action recognition
 
 It is used by the Qt demo (``pedrec/demo.py``), the benchmark and the dataset tools. Every stage can be disabled (e.g.
 only the detector, or the pose net on the full frame without a detector).
@@ -362,8 +362,9 @@ class PedRecPipeline:
         dt = 1.0 / self.cfg.source_fps
         for human in humans:
             smoother = self.smoothers.setdefault(human.uid, HumanStateSmoother())
-            if self.lifter is None:  # the lifted 3D poses are already temporally consistent
-                human.skeleton_3d = smoother.smooth_skeleton_3d(human.skeleton_3d, dt)
+            # A temporal receptive field does not guarantee smooth output. The lifter optimizes per-frame
+            # position error and retains the current pose through its residual connection.
+            human.skeleton_3d = smoother.smooth_skeleton_3d(human.skeleton_3d, dt)
             human.orientation = smoother.smooth_orientation(human.orientation, dt)
 
     def _get_ehpi_history(self, uid: int) -> List[Human]:
