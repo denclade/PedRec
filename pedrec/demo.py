@@ -120,6 +120,8 @@ def get_pipeline_config(args) -> PipelineConfig:
         data_root=args.data_dir,
         detector_conf_thresh=args.detector_conf_thresh,
         human_min_score=args.human_min_score,
+        track_min_pose_score=args.track_min_pose_score,
+        track_recovery_frames=args.track_recovery_frames,
         action_thresh=args.action_thresh,
         rtdetr_model=args.rtdetr_model,
         source_fps=args.source_fps,
@@ -278,6 +280,10 @@ def parse_args(argv=None):
     thresholds = parser.add_argument_group("thresholds")
     thresholds.add_argument("--detector-conf-thresh", type=float, default=0.4)
     thresholds.add_argument("--human-min-score", type=float, default=0.65)
+    thresholds.add_argument("--track-min-pose-score", type=float, default=0.4,
+                            help="Minimum pose confidence for continuing an accepted track (default 0.4).")
+    thresholds.add_argument("--track-recovery-frames", type=int, default=3,
+                            help="Re-estimate poses on predicted crops for detector gaps (default 3; 0 disables).")
     thresholds.add_argument("--action-thresh", type=float, default=0.7)
 
     output = parser.add_argument_group("headless output")

@@ -12,7 +12,7 @@ Performance relevant design decisions:
 * everything runs under ``torch.inference_mode``
 * the frame is uploaded once; detector resize, person crops (``grid_sample``), normalization and the
   back-transformation of the 2D poses run batched on the device (``pedrec.inference.gpu_ops``)
-* PedRecNet runs exactly once per frame on all person crops
+* PedRecNet runs batched on detections; a second batch recovers short detector gaps on predicted track crops
 * optional fp16 autocast, channels_last memory format and ``torch.compile`` (see ``RuntimeConfig``)
 """
 import logging
@@ -35,7 +35,7 @@ from pedrec.networks.net_detr.rtdetr_detector import RTDetrDetector
 from pedrec.networks.net_pedrec.ehpi_stgcn import EhpiStGcn
 from pedrec.networks.net_pedrec.pedrec_net_factory import load_pedrec_net
 from pedrec.networks.net_pedrec.pose_lifter import TemporalPoseLifter, lifter_features
-from pedrec.tracking.byte_tracker import ByteTracker
+from pedrec.tracking.byte_tracker import ByteTracker, center_bbs_to_xyxy, iou_matrix
 from pedrec.tracking.one_euro import HumanStateSmoother
 from pedrec.utils.augmentation_helper import get_normalization_size
 from pedrec.utils.bb_helper import split_human_bbs, get_bb_score
@@ -82,6 +82,8 @@ class PipelineConfig:
     person_low_thresh: float = 0.1  # ByteTrack: second association stage (continues existing tracks only)
     track_max_lost: int = 30  # frames a lost track can be recovered
     human_min_score: float = 0.65  # humans with a lower mean joint confidence are dropped
+    track_min_pose_score: float = 0.4  # lower continuation threshold for previously accepted pose tracks
+    track_recovery_frames: int = 3  # re-estimate poses on predicted crops during short detector gaps (0 disables)
     action_thresh: float = 0.7
     temporal_field: ImageSize = field(default_factory=lambda: ImageSize(width=64, height=32))
     source_fps: float = 30.0  # frame rate of the input, used for smoothing and the EHPI temporal sampling
@@ -96,6 +98,10 @@ class PipelineConfig:
             raise ValueError("Tracking requires pose estimation.")
         if self.use_lifter and not self.use_tracking:
             raise ValueError("The temporal 3D lifter requires tracking.")
+        if self.track_recovery_frames < 0:
+            raise ValueError("track_recovery_frames must be nonnegative")
+        if not 0 <= self.track_min_pose_score <= 1:
+            raise ValueError("track_min_pose_score must be between 0 and 1")
 
 
 @dataclass
@@ -340,8 +346,8 @@ class PedRecPipeline:
                 human.lifter_features = lifter_features(human.skeleton_2d, human.skeleton_3d, bb)
         return humans
 
-    def track(self, humans: List[Human], human_bbs: List[np.ndarray]) -> List[Human]:
-        """Assigns track ids; humans that are not (yet) part of a confirmed track are dropped."""
+    def track(self, humans: List[Human], human_bbs: List[np.ndarray], frame: torch.Tensor) -> List[Human]:
+        """Assigns ids and re-estimates poses on predicted crops through short detector gaps."""
         if len(humans) == 0:
             result = self.tracker.update(np.zeros((0, 4)), np.zeros(0))
         else:
@@ -353,9 +359,42 @@ class PedRecPipeline:
             if self.lifter is not None:
                 self.lifter.remove(uid)
         tracked = []
+        tracks_by_id = {track.uid: track for track in self.tracker.tracks}
         for det_idx, uid in result.assignments.items():
-            humans[det_idx].uid = uid
-            tracked.append(humans[det_idx])
+            track = tracks_by_id[uid]
+            threshold = self.cfg.human_min_score
+            if track.extra.get("pose_confirmed", False):
+                threshold = min(threshold, self.cfg.track_min_pose_score)
+            if humans[det_idx].score > threshold:
+                track.extra["pose_confirmed"] = True
+                humans[det_idx].uid = uid
+                tracked.append(humans[det_idx])
+
+        # ByteTrack keeps lost ids but emits no observations for them. Run the pose net on the current image
+        # at their predicted locations. These crops never enter detector association or reset the lost counter.
+        candidates, crops = [], []
+        observed = center_bbs_to_xyxy(np.asarray(human_bbs)) if human_bbs else np.zeros((0, 4))
+        for track in self.tracker.lost_tracks:
+            if not track.extra.get("pose_confirmed", False):
+                continue
+            if track.time_since_update > self.cfg.track_recovery_frames:
+                continue
+            # Avoid emitting a second skeleton over a currently detected person after an association failure.
+            if len(observed) and np.any(iou_matrix(track.xyxy[None], observed) > 0.5):
+                continue
+            cx, cy, aspect, height = track.mean[:4]
+            bb = np.array([cx, cy, aspect * height, height, track.score, 0], dtype=np.float32)
+            if not np.isfinite(bb).all() or min(bb[2:4]) <= 1:
+                continue
+            candidates.append(track)
+            crops.append(bb)
+        if crops:
+            recovered = self.estimate_poses(frame, crops)
+            threshold = min(self.cfg.human_min_score, self.cfg.track_min_pose_score)
+            for track, human in zip(candidates, recovered):
+                if human.score > threshold:
+                    human.uid = track.uid
+                    tracked.append(human)
         return tracked
 
     def smooth(self, humans: List[Human]):
@@ -418,9 +457,10 @@ class PedRecPipeline:
             humans = self.estimate_poses(frame, human_bbs)
             t = lap("pose", t)
             if self.tracker is not None:
-                humans = self.track(humans, human_bbs)
+                humans = self.track(humans, human_bbs, frame)
                 t = lap("tracking", t)
-            humans = [human for human in humans if human.score > self.cfg.human_min_score]
+            else:
+                humans = [human for human in humans if human.score > self.cfg.human_min_score]
             if self.lifter is not None:
                 self.lifter(frame_nr, humans)
                 t = lap("lifting", t)

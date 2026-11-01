@@ -106,6 +106,70 @@ def test_invalid_stage_combination():
         PipelineConfig(use_tracking=False, use_lifter=True, use_action=False).validate()
 
 
+def _tracking_pipeline(weights, visible, scores, recovery_frames=3):
+    class Detector(FakeDetector):
+        def __call__(self, *args):
+            boxes = super().__call__(*args)
+            return boxes[:1] if visible[self.calls - 1] else []
+
+    class PoseEstimator:
+        calls = 0
+
+        def __call__(self, frame, bbs):
+            self.calls += 1
+            skeletons = np.zeros((len(bbs), 26, 3), dtype=np.float32)
+            poses = np.zeros((len(bbs), 26, 4), dtype=np.float32)
+            for i, bb in enumerate(bbs):
+                skeletons[i, :, 0] = bb[0] + np.linspace(-10, 10, 26)
+                skeletons[i, :, 1] = bb[1] + np.linspace(-30, 30, 26)
+                skeletons[i, :, 2] = scores[detector.calls - 1]
+                poses[i, :, 0] = self.calls  # fresh estimates, not frozen previous skeletons
+                poses[i, :, 3] = skeletons[i, :, 2]
+            return dict(skeletons=skeletons, skeletons_3d=poses,
+                        orientations=np.zeros((len(bbs), 2, 2), dtype=np.float32))
+
+    detector = Detector()
+    cfg = PipelineConfig(use_lifter=False, use_action=False, pedrec_weights=weights["pedrec"],
+                         track_recovery_frames=recovery_frames)
+    pipeline = PedRecPipeline(cfg, _app_cfg(), torch.device("cpu"), detector=detector)
+    pipeline.pose_estimator = PoseEstimator()
+    return pipeline
+
+
+def test_short_detector_gaps_get_fresh_poses_and_keep_id(weights):
+    pipeline = _tracking_pipeline(weights, [True, False, False, False, False, True], [0.9] * 6)
+    results = [pipeline.process(i, img) for i, img in enumerate(_frames(6))]
+    assert [len(result.humans) for result in results] == [1, 1, 1, 1, 0, 1]
+    humans = [result.humans[0] for result in results if result.humans]
+    assert len({human.uid for human in humans}) == 1
+    assert len({float(human.skeleton_3d[0, 0]) for human in humans}) == len(humans)
+    assert len(pipeline.tracker.tracks) == 1
+    assert pipeline.tracker.next_uid == 1  # recovery must not create additional tracks
+
+
+def test_pose_confidence_hysteresis_only_for_accepted_tracks(weights):
+    pipeline = _tracking_pipeline(weights, [True] * 5, [0.5, 0.9, 0.5, 0.2, 0.9])
+    results = [pipeline.process(i, img) for i, img in enumerate(_frames(5))]
+    assert [len(result.humans) for result in results] == [0, 1, 1, 0, 1]
+    assert len({result.humans[0].uid for result in results if result.humans}) == 1
+
+
+@pytest.mark.parametrize("score,recovery_frames", [(0.2, 3), (0.9, 0)])
+def test_gap_recovery_requires_pose_confidence_and_can_be_disabled(weights, score, recovery_frames):
+    pipeline = _tracking_pipeline(weights, [True, False], [0.9, score], recovery_frames)
+    assert len(pipeline.process(0, next(_frames())).humans) == 1
+    assert pipeline.process(1, next(_frames())).humans == []
+
+
+def test_gap_recovery_does_not_duplicate_overlapping_detection(weights):
+    pipeline = _tracking_pipeline(weights, [True, True], [0.9, 0.9])
+    assert len(pipeline.process(0, next(_frames())).humans) == 1
+    # Force an association failure despite an overlapping observation.
+    pipeline.tracker.match_thresh = 0.0
+    result = pipeline.process(1, next(_frames()))
+    assert len(result.humans) == 1
+
+
 @pytest.mark.parametrize("use_lifter", [False, True])
 def test_3d_smoothing_reduces_stationary_jitter_with_or_without_lifter(use_lifter):
     # Exercise the live postprocessing on a stationary pose with alternating estimation noise.

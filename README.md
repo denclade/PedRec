@@ -217,10 +217,14 @@ Useful options (see `python pedrec/demo.py --help`):
 - speed: `--fast` (= `--half --channels-last`), `--compile`, `--prefetch N`, `--cpu`
 - `--no-lifter` (per frame 3D poses), `--size WxH`, `--max-frames N`, `--rtdetr-model`, `--pedrec-weights`,
   `--lifter-weights`, `--ehpi3d-weights`
+- `--track-recovery-frames N` (default 3; 0 disables): re-estimate poses on Kalman-predicted crops during short
+  detector gaps. Recovery requires a previously accepted pose track and sufficient current pose confidence; it does
+  not reset the detector's lost-track counter. `--track-min-pose-score` (default 0.4) sets the continuation threshold;
+  new pose tracks still require `--human-min-score` (default 0.65).
 
 The pipeline (`pedrec/inference/pipeline.py`, `PedRecPipeline`) can be embedded in your own code. It uploads every
 frame once, runs the person crops, normalization and coordinate transformations batched on the GPU and runs PedRecNet
-exactly once per frame. The batched path is tested against a plain OpenCV implementation
+once on detected crops, plus a recovery batch for eligible lost tracks when needed. The batched path is tested against a plain OpenCV implementation
 (`tests/test_inference_equivalence.py`).
 
 # Training

@@ -3,8 +3,8 @@ Multi person tracker following ByteTrack (Zhang et al., ECCV 2022): a constant v
 two association stages with the Hungarian algorithm, first with the high score detections, then the remaining tracks
 with the low score detections (which recovers partially occluded persons instead of dropping them).
 
-Compared to the legacy tracker (optical flow on the joints + pose similarity merging) this needs no second PedRecNet
-pass for undetected persons, keeps ids through short occlusions and does not create duplicate persons.
+The tracker keeps ids through short occlusions but emits assignments only for current detections. The inference
+pipeline can separately re-estimate poses on predicted track crops to bridge short detector gaps.
 """
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
