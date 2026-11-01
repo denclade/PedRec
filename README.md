@@ -341,7 +341,13 @@ After retraining the lifter, rerun `train:ehpi3d:data` before training EHPI3D.
 ```bash
 mise run train:ehpi3d:list                     # variants (gt / pred / mixed skeletons x 30 fps / 15 fps / 64 frames)
 mise run train:ehpi3d --variant gt_pred_64frames
+mise run train:ehpi3d --lr 1e-3                # skip the optional LR search with an explicit OneCycle max LR
 ```
+
+Without `--lr`, EHPI3D runs a learning-rate range test. If the test cannot recommend a rate (for example, loss
+still decreases at the end of its range), training logs a warning and uses `1e-3` as a conservative starting
+maximum LR. The endpoint of the search is not used as a recommendation. The search restores the original model
+weights before training; inspect the saved plot or set `--lr` explicitly to tune the rate.
 
 The training uses the SIM-C01 skeleton dataframes and the PedRecNet results on them with the lifted 3D poses
 (`*_allframes_lifted.pkl`, `mise run train:ehpi3d:data`), i.e. the same 3D poses the pipeline produces at runtime.

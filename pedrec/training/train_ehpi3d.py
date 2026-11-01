@@ -44,8 +44,10 @@ from pedrec.utils.torch_utils.torch_helper import get_device, split_no_wd_params
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LR = 1e-3  # conservative fallback; a range-test endpoint is not a valid recommendation
+
 OPTIMIZER_PARAMS = {
-    "lr": 1e-3,
+    "lr": DEFAULT_LR,
     "betas": (0.9, 0.999),
     "eps": 1e-8,
     "weight_decay": 1e-2,
@@ -86,8 +88,10 @@ def find_learning_rate(net, params, criterion, train_loader, device, output_path
     fig.savefig(output_path)
     plt.close(fig)
     if not isinstance(result, tuple):
-        raise RuntimeError(f"LR range test did not return a suggestion (plot: {output_path}). "
-                           f"Pass a learning rate explicitly via --lr.")
+        logger.warning("LR range test returned no reliable suggestion; using fallback max_lr=%.2e. "
+                       "This is a starting value, not a measured optimum. Plot: %s; override via --lr.",
+                       DEFAULT_LR, output_path)
+        return DEFAULT_LR
     _, suggested_lr = result
     logger.info(f"LR range test suggested lr={suggested_lr:.2e} (plot: {output_path})")
     return suggested_lr
@@ -172,7 +176,9 @@ def parse_args(argv=None):
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=48)
     parser.add_argument("--num-workers", type=int, default=12)
-    parser.add_argument("--lr", type=float, default=None, help="Learning rate, skips the LR range test.")
+    parser.add_argument("--lr", type=float, default=None,
+                        help=f"Maximum OneCycle learning rate, skips the LR range test. "
+                             f"Without a reliable suggestion the range test falls back to {DEFAULT_LR:g}.")
     parser.add_argument("--amp", choices=["auto", "bf16", "fp16", "off"], default="auto",
                         help="Mixed precision (default auto: bf16 where supported); 'off' = original fp32 training.")
     parser.add_argument("--grad-clip", type=float, default=10.0, help="Max gradient norm, 0 disables.")
