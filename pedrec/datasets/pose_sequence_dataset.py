@@ -96,15 +96,19 @@ class PoseSequenceDataset(Dataset):
         order = np.lexsort((df["frame_nr_local"].to_numpy(), df["img_dir"].astype(str).to_numpy(),
                             df["scene_id"].to_numpy()))
         keys = (df["scene_id"].astype(str) + "|" + df["img_dir"].astype(str)).to_numpy()[order]
-        starts = np.r_[0, np.flatnonzero(keys[1:] != keys[:-1]) + 1]
+        starts = np.r_[0, np.flatnonzero(keys[1:] != keys[:-1]) + 1] if len(order) else np.empty(0, dtype=int)
         self.order = order  # position -> df row
         self.sequence_start = np.repeat(starts, np.diff(np.r_[starts, len(order)]))  # position -> first position
         targets = np.flatnonzero(self.valid_gt[order])
         self.targets = targets[::max(1, target_step)]
         if source == PREDICTION:
             self.targets = self.targets[self.valid_result[order[self.targets]]]
-        logger.info(f"{df_path}: {len(starts)} sequences, {len(self.targets)} targets"
-                    + (f", predictions for {self.valid_result.mean():.0%} of the frames" if results_df_path else ""))
+        coverage = ""
+        if results_df_path:
+            count = int(self.valid_result.sum())
+            coverage = (f", predictions for {count / len(df):.0%} of the frames ({count}/{len(df)})"
+                        if len(df) else ", predictions for 0/0 frames (empty dataframe)")
+        logger.info(f"{df_path}: {len(starts)} sequences, {len(self.targets)} targets" + coverage)
 
     def __len__(self):
         return len(self.targets)

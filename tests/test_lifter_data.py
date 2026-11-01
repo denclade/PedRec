@@ -1,5 +1,7 @@
 """Real-image export, sparse alignment, source mixture and frozen-convention loss."""
 import json
+import logging
+import warnings
 from pathlib import Path
 
 import cv2
@@ -170,6 +172,19 @@ def test_empty_validation_is_skipped_and_cannot_select_zero_error(tmp_path):
     assert "empty" not in result and "fixture" in result
     metadata = json.loads((tmp_path / "lifter.pth.json").read_text())
     assert metadata["selection_sets"] == ["fixture"]
+
+
+def test_empty_prediction_dataframe_logs_zero_sequences_without_nan(tmp_path, caplog):
+    gt, result = tmp_path / "empty_gt.pkl", tmp_path / "empty_predictions.pkl"
+    read_pedrec_df(GT).iloc[:0].to_pickle(gt)
+    read_pedrec_df(RESULTS).iloc[:0].to_pickle(result)
+    with caplog.at_level(logging.INFO), warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        dataset = PoseSequenceDataset(str(gt), str(result), train=False, source=PREDICTION)
+    assert len(dataset) == 0 and len(dataset.sequence_start) == 0
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+    assert "0 sequences, 0 targets" in caplog.text
+    assert "predictions for 0/0 frames (empty dataframe)" in caplog.text
 
 
 def test_training_with_sparse_native_gt_and_frozen_adapter(tmp_path):
